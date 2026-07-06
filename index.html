@@ -1,0 +1,260 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6fbfa">
+  <title>Mianer 恋人小手机</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="page" aria-label="Mianer 恋人小手机">
+    <section class="device" aria-label="手机聊天应用">
+      <div class="device-key key-left" aria-hidden="true"></div>
+      <div class="device-key key-right" aria-hidden="true"></div>
+      <div class="screen" id="screen">
+        <header class="status-bar" aria-label="手机状态">
+          <span id="clock">09:18</span>
+          <span class="status-icons" aria-hidden="true">
+            <span class="signal"><i></i><i></i><i></i></span>
+            <span class="battery"><i></i></span>
+          </span>
+        </header>
+
+        <header class="topbar">
+          <button class="icon-button" id="clearChatButton" type="button" title="清空当前聊天" aria-label="清空当前聊天">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10M10 7V5h4v2M8 10l1 9h6l1-9M6 7h12"/></svg>
+          </button>
+          <div class="brand">
+            <strong>Mianer Phone</strong>
+            <span id="connectionState">本地陪伴</span>
+          </div>
+          <button class="icon-button dark" id="newButton" type="button" title="新建" aria-label="新建">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </header>
+
+        <section class="viewport" aria-live="polite">
+          <section class="view chat-view is-active" id="view-chat" data-view="chat" aria-label="聊天">
+            <nav class="character-strip" id="characterStrip" aria-label="选择角色"></nav>
+
+            <section class="active-persona" id="activePersona" aria-label="当前角色"></section>
+
+            <section class="world-hints" id="worldHints" aria-label="已命中的世界书"></section>
+
+            <section class="messages" id="messages" aria-label="聊天记录"></section>
+
+            <form class="composer" id="chatForm">
+              <label class="sr-only" for="chatInput">输入消息</label>
+              <textarea id="chatInput" rows="1" maxlength="1600" placeholder="对他说点什么..." autocomplete="off"></textarea>
+              <button class="reply-button" id="replyButton" type="button" title="点击AI回复" style="display:none; margin-right: 5px;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14H11v-2h2zm0-3H11V7h2z"/></svg></button><button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送消息">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-5 16-3-7-8-1Z"/><path d="m12 13 8-9"/></svg>
+              </button>
+            </form>
+          </section>
+
+          <section class="view library-view" id="view-characters" data-view="characters" aria-label="角色库">
+            <div class="section-head">
+              <div>
+                <h1>角色</h1>
+                <p id="characterCount">0 个角色</p>
+              </div>
+              <button class="solid-button" id="addCharacterButton" type="button">添加角色</button>
+            </div>
+            <div class="list" id="characterList"></div>
+          </section>
+
+          <section class="view library-view" id="view-world" data-view="world" aria-label="世界书">
+            <div class="section-head">
+              <div>
+                <h1>世界书</h1>
+                <p id="worldCount">0 条设定</p>
+              </div>
+              <button class="solid-button" id="addWorldButton" type="button">添加条目</button>
+            </div>
+            <div class="search-row">
+              <label class="sr-only" for="worldSearch">搜索世界书</label>
+              <input id="worldSearch" type="search" placeholder="搜索标题、关键词或内容">
+            </div>
+            <div class="list" id="worldList"></div>
+          </section>
+
+          <section class="view settings-view" id="view-settings" data-view="settings" aria-label="设置">
+            <div class="section-head compact">
+              <div>
+                <h1>设置</h1>
+                <p>OpenAI 兼容接口</p>
+              </div>
+            </div>
+
+            <form class="settings-form" id="settingsForm">
+              <label>
+                <span>API 地址</span>
+                <input id="apiEndpoint" name="endpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off">
+              </label>
+              <label>
+                <span>API Key</span>
+                <input id="apiKey" name="apiKey" type="password" placeholder="sk-... 或代理密钥" autocomplete="off">
+              </label>
+              <div class="two-fields">
+                <label>
+                  <span>模型</span>
+                  <div class="select-wrapper"><select id="apiModel" name="model" style="width:100%"></select><input id="apiModelCustom" type="text" placeholder="或手动输入模型名" style="margin-top: 5px; display: none;"></div>
+                </label>
+                <label>
+                  <span>温度</span>
+                  <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" placeholder="0.85">
+                </label>
+              </div>
+              <label class="checkline">
+                <input id="rememberKey" name="rememberKey" type="checkbox">
+                <span>在本机记住 Key</span></label><label class="checkline"><input id="manualReplyMode" name="manualReplyMode" type="checkbox"><span>手动点击按钮才会回复</span>
+              </label>
+              <label class="checkline">
+                <input id="proxyMode" name="proxyMode" type="checkbox">
+                <span>代理不需要前端 Key</span>
+              </label>
+              <div class="button-row">
+                <button class="ghost-button" id="testButton" type="button">测试</button>
+                <button class="solid-button" type="submit">保存</button>
+              </div>
+            </form>
+
+            <div class="settings-actions">
+              <button class="ghost-button" id="exportButton" type="button">导出设定</button>
+              <button class="ghost-button" id="importButton" type="button">导入设定</button>
+              <button class="danger-button" id="resetButton" type="button">恢复默认</button>
+              <input class="sr-only" id="importFile" type="file" accept="application/json">
+            </div>
+
+            <p class="note" id="settingsNote">公开网页建议使用自己的服务端代理，再把代理地址填入这里。</p>
+          </section>
+        </section>
+
+        <nav class="tabbar" aria-label="主导航">
+          <button class="tab is-active" type="button" data-tab="chat" aria-label="聊天">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14v9H9l-4 4V6Z"/></svg><span>聊天</span>
+          </button>
+          <button class="tab" type="button" data-tab="characters" aria-label="角色">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-4 14.5-4 16 0"/></svg><span>角色</span>
+          </button>
+          <button class="tab" type="button" data-tab="world" aria-label="世界书">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21V5.5Z"/><path d="M5 5.5V21"/></svg><span>世界书</span>
+          </button>
+          <button class="tab" type="button" data-tab="settings" aria-label="设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"/><path d="m19 12 2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-1.6-.9L14.7 4H9.3L9 7.1a7.5 7.5 0 0 0-1.6.9L5 7l-2 3.5L5 12l-2 1.5L5 17l2.4-1a7.5 7.5 0 0 0 1.6.9l.3 3.1h5.4l.3-3.1a7.5 7.5 0 0 0 1.6-.9L19 17l2-3.5L19 12Z"/></svg><span>设置</span>
+          </button>
+        </nav>
+
+        <aside class="drawer" id="characterDrawer" aria-hidden="true" aria-label="编辑角色">
+          <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="characterDrawerTitle">
+            <div class="drawer-head">
+              <div>
+                <h2 id="characterDrawerTitle">编辑角色</h2>
+                <p>他的性格、开场白和提示词都会保存到本机。</p>
+              </div>
+              <button class="icon-button" id="closeCharacterDrawer" type="button" title="关闭" aria-label="关闭角色编辑">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <form class="editor-form" id="characterForm">
+              <input id="characterId" type="hidden">
+              <div class="three-fields">
+                <label>
+                  <span>名字</span>
+                  <input id="characterName" type="text" maxlength="24" required>
+                </label>
+                <label>
+                  <span>头像字</span>
+                  <input id="characterAvatar" type="text" maxlength="2" required>
+                </label>
+                <label>
+                  <span>主色</span>
+                  <input id="characterColor" type="color" required>
+                </label>
+              </div>
+              <label>
+                <span>身份</span>
+                <input id="characterTitle" type="text" maxlength="40" required>
+              </label>
+              <label>
+                <span>标签</span>
+                <input id="characterTags" type="text" placeholder="温柔, 克制, 会哄人">
+              </label>
+              <label>
+                <span>简介</span>
+                <textarea id="characterIntro" rows="2" maxlength="180" required></textarea>
+              </label>
+              <label>
+                <span>开场白</span>
+                <textarea id="characterGreeting" rows="3" maxlength="420" required></textarea>
+              </label>
+              <label>
+                <span>角色提示词</span>
+                <textarea id="characterSystem" rows="7" maxlength="2600" required></textarea>
+              </label>
+              <div class="button-row sticky-actions">
+                <button class="ghost-button" id="duplicateCharacterButton" type="button">复制</button>
+                <button class="solid-button" type="submit">保存角色</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+
+        <aside class="drawer" id="worldDrawer" aria-hidden="true" aria-label="编辑世界书">
+          <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="worldDrawerTitle">
+            <div class="drawer-head">
+              <div>
+                <h2 id="worldDrawerTitle">编辑世界书</h2>
+                <p>命中关键词后会注入到角色提示词里。</p>
+              </div>
+              <button class="icon-button" id="closeWorldDrawer" type="button" title="关闭" aria-label="关闭世界书编辑">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <form class="editor-form" id="worldForm">
+              <input id="worldId" type="hidden">
+              <label>
+                <span>标题</span>
+                <input id="worldTitle" type="text" maxlength="50" required>
+              </label>
+              <div class="two-fields">
+                <label>
+                  <span>范围</span>
+                  <select id="worldScope"></select>
+                </label>
+                <label>
+                  <span>优先级</span>
+                  <input id="worldPriority" type="number" min="0" max="100" step="1" required>
+                </label>
+              </div>
+              <label>
+                <span>触发关键词</span>
+                <input id="worldKeywords" type="text" placeholder="睡前, 回家, 牵手">
+              </label>
+              <label class="checkline">
+                <input id="worldAlways" type="checkbox">
+                <span>始终注入</span>
+              </label>
+              <label class="checkline">
+                <input id="worldEnabled" type="checkbox">
+                <span>启用条目</span>
+              </label>
+              <label>
+                <span>设定内容</span>
+                <textarea id="worldContent" rows="8" maxlength="2600" required></textarea>
+              </label>
+              <div class="button-row sticky-actions">
+                <button class="ghost-button" id="duplicateWorldButton" type="button">复制</button>
+                <button class="solid-button" type="submit">保存条目</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
