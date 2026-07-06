@@ -89,7 +89,7 @@ const elements = {
   model: document.querySelector("#apiModel"),
   temperature: document.querySelector("#temperature"),
   rememberKey: document.querySelector("#rememberKey"),
-  proxyMode: document.querySelector("#proxyMode"), manualReplyMode: document.querySelector("#manualReplyMode"), replyButton: document.querySelector("#replyButton"), apiModelCustom: document.querySelector("#apiModelCustom"),
+  proxyMode: document.querySelector("#proxyMode"), corsProxyMode: document.querySelector("#corsProxyMode"), manualReplyMode: document.querySelector("#manualReplyMode"), replyButton: document.querySelector("#replyButton"), apiModelCustom: document.querySelector("#apiModelCustom"),
   testButton: document.querySelector("#testButton"),
   settingsNote: document.querySelector("#settingsNote"),
   exportButton: document.querySelector("#exportButton"),
@@ -129,7 +129,7 @@ const elements = {
   worldHints: document.querySelector("#worldHints")
 };
 
-const defaultConfig = { manualReplyMode: false,
+const defaultConfig = { manualReplyMode: false, corsProxyMode: false,
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4.1-mini",
   temperature: 0.85,
@@ -148,7 +148,7 @@ function init() {
   setInterval(updateClock, 15000);
   
   // 载入选项
-  populateScopeSelect(); populateModelsDropdown();
+  populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
   
   renderCharactersStrip();
   renderActivePersonaCard();
@@ -162,7 +162,7 @@ function init() {
   autosizeInput();
 }
 
-function bindEvents() { elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown);
+function bindEvents() { elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown); elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown);
   elements.chatForm.addEventListener("submit", handleSubmit);
   elements.chatInput.addEventListener("input", autosizeInput);
   elements.chatInput.addEventListener("keydown", (event) => {
@@ -299,8 +299,8 @@ function saveConfigFromForm() {
     model: (elements.model.value === "custom" ? elements.apiModelCustom.value.trim() : elements.model.value) || defaultConfig.model,
     temperature: clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2),
     rememberKey: elements.rememberKey.checked,
-    proxyMode: elements.proxyMode.checked,
-    apiKey: elements.apiKey.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim()
+    proxyMode: elements.proxyMode.checked, corsProxyMode: elements.corsProxyMode.checked,
+    apiKey: elements.apiKey.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim()
   };
 
   localStorage.setItem(configKey, JSON.stringify({
@@ -308,7 +308,7 @@ function saveConfigFromForm() {
     model: apiConfig.model,
     temperature: apiConfig.temperature,
     rememberKey: apiConfig.rememberKey,
-    proxyMode: apiConfig.proxyMode, manualReplyMode: apiConfig.manualReplyMode, customModelName: apiConfig.customModelName
+    proxyMode: apiConfig.proxyMode, corsProxyMode: apiConfig.corsProxyMode, manualReplyMode: apiConfig.manualReplyMode, customModelName: apiConfig.customModelName
   }));
 
   const keyStore = apiConfig.rememberKey ? localStorage : sessionStorage;
@@ -324,7 +324,7 @@ function syncConfigForm() {
   elements.temperature.value = apiConfig.temperature ?? defaultConfig.temperature;
   elements.apiKey.value = apiConfig.apiKey || "";
   elements.rememberKey.checked = Boolean(apiConfig.rememberKey);
-  elements.proxyMode.checked = Boolean(apiConfig.proxyMode); elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode); elements.apiModelCustom.value = apiConfig.customModelName || ""; if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } elements.manualReplyMode.addEventListener("change", () => { if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } });
+  elements.proxyMode.checked = Boolean(apiConfig.proxyMode); elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode); elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode); elements.apiModelCustom.value = apiConfig.customModelName || ""; elements.apiModelCustom.value = apiConfig.customModelName || ""; if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } elements.manualReplyMode.addEventListener("change", () => { if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } });
 }
 
 function updateConnectionLabel(status) {
@@ -433,10 +433,38 @@ async function handleSubmit(event) {
   saveState();
   renderMessages();
   
-  if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; }
+  if (!apiConfig.manualReplyMode) { if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; } } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; } elements.replyButton.disabled = false; }; }
 }
 
+
 function triggerWorldBook(content, charId) {
+  const hitEntries = [];
+  const hints = [];
+  
+  // 查找当前伴侣关联的绑定世界书 ID
+  const activeChar = appState.characters.find(c => c.id === charId);
+  const boundBookIds = activeChar ? (activeChar.boundWorldBookIds || []) : [];
+  
+  appState.worldBook.forEach((entry) => {
+    if (!entry.enabled) return;
+    
+    // 只允许全局注入(all)或者伴侣手动关联选中的世界书
+    const isBound = boundBookIds.includes(entry.id);
+    const isGlobal = entry.scope === "all";
+    if (!isGlobal && !isBound) return;
+  
+    let isHit = entry.always;
+    if (!isHit && entry.keywords) {
+      const kws = entry.keywords.split(/[,，]/).map(k => k.trim().toLowerCase()).filter(Boolean);
+      isHit = kws.some(kw => content.toLowerCase().includes(kw));
+    }
+    
+    if (isHit) {
+      hitEntries.push(entry);
+      hints.push(entry.title);
+    }
+  });
+
   const hitEntries = [];
   const hints = [];
   
@@ -504,8 +532,27 @@ async function replyToUser(char, content) {
   }
 }
 
+
 async function callChatApi(char, worldEntries) {
-  const endpoint = apiConfig.endpoint || defaultConfig.endpoint;
+  let endpoint = apiConfig.endpoint || defaultConfig.endpoint;
+  const apiMessages = buildApiMessages(char, worldEntries);
+  
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  
+  if (apiConfig.apiKey) {
+    headers["Authorization"] = `Bearer ${apiConfig.apiKey}`;
+  }
+
+  // 跨域兼容中转代理模式
+  if (apiConfig.corsProxyMode) {
+    const originalEndpoint = endpoint;
+    endpoint = "https://cors-anywhere.azm.workers.dev/" + endpoint;
+    headers["Target-URL"] = originalEndpoint;
+  }
+
+  // overridden
   const apiMessages = buildApiMessages(char, worldEntries);
   
   const headers = {
@@ -646,7 +693,28 @@ function populateScopeSelect() {
   elements.worldScope.innerHTML = scopes.map(s => "<option value=\"" + s.value + "\">" + escapeHtml(s.label) + "</option>").join("");
 }
 
+
 function openCharacterDrawer(char = null) {
+  // 渲染关联世界书设定复选框列表
+  const worldBooksContainer = document.getElementById("characterWorldBooks");
+  if (worldBooksContainer) {
+    if (appState.worldBook.length === 0) {
+      worldBooksContainer.innerHTML = "<div style=\x22font-size:0.7rem; color:var(--muted);\x22>暂无世界书设定，可前往世界书选项卡添加。</div>";
+    } else {
+      const activeBindings = char ? (char.boundWorldBookIds || []) : [];
+      worldBooksContainer.innerHTML = appState.worldBook.map(entry => {
+        const isChecked = activeBindings.includes(entry.id) || entry.scope === "all";
+        const isForceAll = entry.scope === "all";
+        return `
+          <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; font-size: 0.76rem; cursor: pointer;">
+            <input type="checkbox" name="boundWorldBooks" value="${entry.id}" ${isChecked ? "checked" : ""} ${isForceAll ? "disabled" : ""}>
+            <span>${escapeHtml(entry.title)} ${isForceAll ? "<span style=\x22color:var(--muted); font-size:0.65rem;\x22>(全局注入)</span>" : ""}</span>
+          </label>
+        `;
+      }).join("");
+    }
+  }
+
   if (char) {
     document.getElementById("characterDrawerTitle").textContent = "编辑角色";
     elements.characterId.value = char.id;
@@ -681,7 +749,30 @@ function closeCharacterDrawer() {
   elements.characterDrawer.setAttribute("aria-hidden", "true");
 }
 
+
 function handleCharacterSubmit(event) {
+  event.preventDefault();
+  const id = elements.characterId.value.trim() || "char-" + Date.now();
+  const name = elements.characterName.value.trim();
+  const avatar = elements.characterAvatar.value.trim() || name[0];
+  const color = elements.characterColor.value;
+  const title = elements.characterTitle.value.trim();
+  const tags = elements.characterTags.value.trim();
+  const intro = elements.characterIntro.value.trim();
+  const greeting = elements.characterGreeting.value.trim();
+  const system = elements.characterSystem.value.trim();
+
+  // 读取绑定的世界书选择项
+  const checkedBoxes = document.querySelectorAll("input[name=\x22boundWorldBooks\x22]:checked");
+  const boundWorldBookIds = Array.from(checkedBoxes).map(cb => cb.value);
+
+  const newChar = {
+    id: id, name: name, avatar: avatar, color: color,
+    soft: convertHexToRgba(color, 0.3),
+    title: title, tags: tags, intro: intro, greeting: greeting, system: system,
+    boundWorldBookIds: boundWorldBookIds
+  };
+
   event.preventDefault();
   const id = elements.characterId.value.trim() || "char-" + Date.now();
   const name = elements.characterName.value.trim();
@@ -714,7 +805,7 @@ function handleCharacterSubmit(event) {
   saveState();
   closeCharacterDrawer();
   
-  populateScopeSelect(); populateModelsDropdown();
+  populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
   renderCharactersStrip();
   renderActivePersonaCard();
   renderCharacterList();
@@ -771,7 +862,7 @@ function renderCharacterList() {
           appState.activeCharacterId = appState.characters[0].id;
         }
         saveState();
-        populateScopeSelect(); populateModelsDropdown();
+        populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
         renderCharactersStrip();
         renderActivePersonaCard();
         renderCharacterList();
@@ -951,8 +1042,64 @@ async function populateModelsDropdown() {
   const select = elements.model;
   select.innerHTML = "<option value=\x22fetching\x22>正在从上游API获取模型列表...</option>";
   
+  // overridden
+  
+  let modelsUrl = endpoint.replace("/chat/completions", "/models");
+  if (apiConfig.corsProxyMode) {
+    modelsUrl = "https://cors-anywhere.azm.workers.dev/" + modelsUrl;
+  }
+
+  
+  const headers = { "Content-Type": "application/json" };
+  if (apiConfig.apiKey) {
+    headers["Authorization"] = "Bearer " + apiConfig.apiKey;
+  }
+  
+  const fallbackModels = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "claude-3-5-sonnet"];
+  
+  try {
+    const response = await fetch(modelsUrl, { method: "GET", headers });
+    if (!response.ok) throw new Error("获取模型失败");
+    const data = await response.json();
+    const models = (data.data || []).map(m => m.id || m).filter(Boolean);
+    
+    if (models.length === 0) throw new Error("列表为空");
+    
+    select.innerHTML = models.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
+  } catch (e) {
+    select.innerHTML = fallbackModels.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
+  }
+  
+  // 绑定切换手动输入逻辑
+  select.onchange = () => {
+    if (select.value === "custom") {
+      elements.apiModelCustom.style.display = "block";
+    } else {
+      elements.apiModelCustom.style.display = "none";
+    }
+  };
+  
+  // 恢复之前选择的模型
+  const savedModel = apiConfig.model || defaultConfig.model;
+  if ([...select.options].some(opt => opt.value === savedModel)) {
+    select.value = savedModel;
+    elements.apiModelCustom.style.display = "none";
+  } else if (savedModel) {
+    select.value = "custom";
+    elements.apiModelCustom.style.display = "block";
+    elements.apiModelCustom.value = savedModel;
+  }
+}
+
+async function populateModelsDropdown() {
+  const select = elements.model;
+  select.innerHTML = "<option value=\x22fetching\x22>正在从上游API获取模型列表...</option>";
+  
   const endpoint = apiConfig.endpoint || defaultConfig.endpoint;
-  const modelsUrl = endpoint.replace("/chat/completions", "/models");
+  let modelsUrl = endpoint.replace("/chat/completions", "/models");
+  if (apiConfig.corsProxyMode) {
+    modelsUrl = "https://cors-anywhere.azm.workers.dev/" + modelsUrl;
+  }
   
   const headers = { "Content-Type": "application/json" };
   if (apiConfig.apiKey) {

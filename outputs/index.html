@@ -112,7 +112,7 @@
               </label>
               <label class="checkline">
                 <input id="proxyMode" name="proxyMode" type="checkbox">
-                <span>代理不需要前端 Key</span>
+                <span>代理不需要前端 Key</span></label><label class="checkline"><input id="corsProxyMode" name="proxyMode" type="checkbox"><span>跨域(CORS)应急兼容模式(通过中转请求)</span>
               </label>
               <div class="button-row">
                 <button class="ghost-button" id="testButton" type="button">测试</button>
@@ -191,7 +191,7 @@
               </label>
               <label>
                 <span>角色提示词</span>
-                <textarea id="characterSystem" rows="7" maxlength="2600" required></textarea>
+                <textarea id="characterSystem" rows="7" maxlength="2600" required></textarea></label><label><span>绑定/关联世界书设定项目</span><div id="characterWorldBooks" style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto; background: rgba(24,32,42,0.03); border: 1px solid rgba(24,32,42,0.08); padding: 10px; border-radius: 14px; margin-top: 5px;"></div>
               </label>
               <div class="button-row sticky-actions">
                 <button class="ghost-button" id="duplicateCharacterButton" type="button">复制</button>
