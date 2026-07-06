@@ -129,13 +129,134 @@ const elements = {
   worldHints: document.querySelector("#worldHints")
 };
 
-const defaultConfig = { manualReplyMode: false, corsProxyMode: false,
+const defaultConfig = {
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4.1-mini",
   temperature: 0.85,
   rememberKey: false,
-  proxyMode: false, manualReplyMode: false, customModelName: ""
+  proxyMode: false,
+  corsProxyMode: false,
+  manualReplyMode: false,
+  customModelName: ""
 };
+
+const ApiHandler = {
+  fallbackModels: ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "glm-4-flash", "claude-3-5-sonnet", "gemini-1.5-flash"],
+  geminiFallbackModels: ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"],
+
+  inferPlatform(config) {
+    const endpoint = String(config?.endpoint || "").toLowerCase();
+    const model = String(config?.model || "").toLowerCase();
+    if (endpoint.includes("generativelanguage.googleapis.com") || endpoint.includes("googleapis.com/v1beta/models") || model.startsWith("gemini-")) return "gemini";
+    return "openai";
+  },
+
+  ensureHttps(url) {
+    let cleaned = String(url || "").trim().replace(/\/+$/, "");
+    if (!cleaned) return "";
+    if (cleaned.startsWith("http://")) cleaned = "https://" + cleaned.slice(7);
+    else if (!/^https?:\/\//i.test(cleaned)) cleaned = "https://" + cleaned;
+    return cleaned.replace(/\/+$/, "");
+  },
+
+  normalizeChatEndpoint(endpoint) {
+    const url = this.ensureHttps(endpoint || defaultConfig.endpoint);
+    if (/\/chat\/completions$/i.test(url)) return url;
+    if (/\/v\d+$/i.test(url) || /\/inference$/i.test(url)) return url + "/chat/completions";
+    return url + "/v1/chat/completions";
+  },
+
+  normalizeModelsEndpoint(endpoint) {
+    let url = this.ensureHttps(endpoint || defaultConfig.endpoint);
+    url = url.replace(/\/chat\/completions$/i, "");
+    if (/\/v\d+$/i.test(url) || /\/inference$/i.test(url)) return url + "/models";
+    return url + "/v1/models";
+  },
+
+  normalizeGeminiBase(endpoint) {
+    let url = this.ensureHttps(endpoint || "https://generativelanguage.googleapis.com");
+    url = url.replace(/\/v1beta\/models\/.+:generateContent$/i, "");
+    url = url.replace(/\/v1\/models\/.+:generateContent$/i, "");
+    url = url.replace(/\/v1beta$/i, "").replace(/\/v1$/i, "");
+    return url;
+  },
+
+  applyCorsProxy(url) {
+    return "https://cors-anywhere.azm.workers.dev/" + url;
+  },
+
+  generateChatPayload(platform, endpoint, apiKey, model, messages, config = {}) {
+    const temperature = config.temperature ?? defaultConfig.temperature;
+    const maxTokens = config.maxTokens || 2048;
+    const headers = { "Content-Type": "application/json" };
+
+    if (platform === "gemini") {
+      const modelName = String(model || "gemini-1.5-flash").replace(/^models\//, "");
+      const base = this.normalizeGeminiBase(endpoint);
+      const url = `${base}/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey || "")}`;
+      const systemText = messages.filter((m) => m.role === "system").map((m) => m.content).filter(Boolean).join("\n\n");
+      const contents = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: String(m.content || "") }] }))
+        .filter((m) => m.parts[0].text.trim());
+      if (contents.length === 0 || contents[0].role !== "user") {
+        contents.unshift({ role: "user", parts: [{ text: systemText ? `【系统指令】\n${systemText}\n\n请根据接下来的聊天继续回复用户。` : "请开始回复。" }] });
+      } else if (systemText) {
+        contents[0].parts[0].text = `【系统指令】\n${systemText}\n\n${contents[0].parts[0].text}`;
+      }
+      const bodyData = { contents, generationConfig: { maxOutputTokens: maxTokens, temperature } };
+      return { url, options: { method: "POST", headers, body: JSON.stringify(bodyData) } };
+    }
+
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    return {
+      url: this.normalizeChatEndpoint(endpoint),
+      options: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false })
+      }
+    };
+  },
+
+  async fetchModels(platform, endpoint, apiKey, config = {}) {
+    if (platform === "gemini") {
+      if (!apiKey) return this.geminiFallbackModels;
+      const url = `${this.normalizeGeminiBase(endpoint)}/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(config.corsProxyMode ? this.applyCorsProxy(url) : url);
+      if (!response.ok) throw new Error("获取模型失败");
+      const data = await response.json();
+      return (data.models || [])
+        .filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent"))
+        .map((m) => String(m.name || "").replace(/^models\//, ""))
+        .filter(Boolean)
+        .sort();
+    }
+
+    const url = this.normalizeModelsEndpoint(endpoint);
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const response = await fetch(config.corsProxyMode ? this.applyCorsProxy(url) : url, { method: "GET", headers });
+    if (!response.ok) throw new Error("获取模型失败");
+    const data = await response.json();
+    return (Array.isArray(data.data) ? data.data : [])
+      .map((m) => m.id || m.name || m)
+      .filter(Boolean)
+      .filter((id) => !String(id).toLowerCase().includes("embed"))
+      .sort();
+  },
+
+  parseChatResponse(platform, data) {
+    let raw = platform === "gemini"
+      ? data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("")
+      : data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.message?.content || data?.reply || data?.content || data?.output_text || data?.output?.[0]?.content?.[0]?.text;
+    if (typeof raw === "string") {
+      raw = raw.replace(/([？！])。+/g, "$1").replace(/([?!])\.+/g, "$1").replace(/([？！])\.+/g, "$1").replace(/([?!])。+/g, "$1");
+    }
+    return raw;
+  }
+};
+
 
 let appState = loadState();
 let apiConfig = loadConfig();
@@ -148,7 +269,8 @@ function init() {
   setInterval(updateClock, 15000);
   
   // 载入选项
-  populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
+  populateScopeSelect();
+  populateModelsDropdown();
   
   renderCharactersStrip();
   renderActivePersonaCard();
@@ -162,7 +284,10 @@ function init() {
   autosizeInput();
 }
 
-function bindEvents() { elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown); elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown);
+function bindEvents() {
+  elements.endpoint.addEventListener("change", populateModelsDropdown);
+  elements.apiKey.addEventListener("change", populateModelsDropdown);
+  elements.corsProxyMode.addEventListener("change", populateModelsDropdown);
   elements.chatForm.addEventListener("submit", handleSubmit);
   elements.chatInput.addEventListener("input", autosizeInput);
   elements.chatInput.addEventListener("keydown", (event) => {
@@ -299,8 +424,11 @@ function saveConfigFromForm() {
     model: (elements.model.value === "custom" ? elements.apiModelCustom.value.trim() : elements.model.value) || defaultConfig.model,
     temperature: clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2),
     rememberKey: elements.rememberKey.checked,
-    proxyMode: elements.proxyMode.checked, corsProxyMode: elements.corsProxyMode.checked,
-    apiKey: elements.apiKey.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim()
+    proxyMode: elements.proxyMode.checked,
+    corsProxyMode: elements.corsProxyMode.checked,
+    apiKey: elements.apiKey.value.trim(),
+    manualReplyMode: elements.manualReplyMode.checked,
+    customModelName: elements.apiModelCustom.value.trim()
   };
 
   localStorage.setItem(configKey, JSON.stringify({
@@ -324,7 +452,14 @@ function syncConfigForm() {
   elements.temperature.value = apiConfig.temperature ?? defaultConfig.temperature;
   elements.apiKey.value = apiConfig.apiKey || "";
   elements.rememberKey.checked = Boolean(apiConfig.rememberKey);
-  elements.proxyMode.checked = Boolean(apiConfig.proxyMode); elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode); elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode); elements.apiModelCustom.value = apiConfig.customModelName || ""; elements.apiModelCustom.value = apiConfig.customModelName || ""; if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } elements.manualReplyMode.addEventListener("change", () => { if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } });
+  elements.proxyMode.checked = Boolean(apiConfig.proxyMode);
+  elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode);
+  elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode);
+  elements.apiModelCustom.value = apiConfig.customModelName || "";
+  elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
+  elements.manualReplyMode.addEventListener("change", () => {
+    elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
+  });
 }
 
 function updateConnectionLabel(status) {
@@ -433,7 +568,18 @@ async function handleSubmit(event) {
   saveState();
   renderMessages();
   
-  if (!apiConfig.manualReplyMode) { if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; } } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; } elements.replyButton.disabled = false; }; }
+  if (!apiConfig.manualReplyMode) {
+    await replyToUser(char, content);
+  } else {
+    elements.replyButton.onclick = async () => {
+      elements.replyButton.disabled = true;
+      try {
+        await replyToUser(char, content);
+      } finally {
+        elements.replyButton.disabled = false;
+      }
+    };
+  }
 }
 
 
@@ -453,25 +599,6 @@ function triggerWorldBook(content, charId) {
     const isGlobal = entry.scope === "all";
     if (!isGlobal && !isBound) return;
   
-    let isHit = entry.always;
-    if (!isHit && entry.keywords) {
-      const kws = entry.keywords.split(/[,，]/).map(k => k.trim().toLowerCase()).filter(Boolean);
-      isHit = kws.some(kw => content.toLowerCase().includes(kw));
-    }
-    
-    if (isHit) {
-      hitEntries.push(entry);
-      hints.push(entry.title);
-    }
-  });
-
-  const hitEntries = [];
-  const hints = [];
-  
-  appState.worldBook.forEach((entry) => {
-    if (!entry.enabled) return;
-    if (entry.scope !== "all" && entry.scope !== charId) return;
-    
     let isHit = entry.always;
     if (!isHit && entry.keywords) {
       const kws = entry.keywords.split(/[,，]/).map(k => k.trim().toLowerCase()).filter(Boolean);
@@ -534,53 +661,26 @@ async function replyToUser(char, content) {
 
 
 async function callChatApi(char, worldEntries) {
-  let endpoint = apiConfig.endpoint || defaultConfig.endpoint;
+  if (!apiConfig.apiKey && !apiConfig.proxyMode) {
+    throw new Error("请先填写 API Key，或开启代理不需要前端 Key 模式。");
+  }
+
   const apiMessages = buildApiMessages(char, worldEntries);
-  
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = `Bearer ${apiConfig.apiKey}`;
-  }
-
-  // 跨域兼容中转代理模式
-  if (apiConfig.corsProxyMode) {
-    const originalEndpoint = endpoint;
-    endpoint = "https://cors-anywhere.azm.workers.dev/" + endpoint;
-    headers["Target-URL"] = originalEndpoint;
-  }
-
-  // overridden
-  const apiMessages = buildApiMessages(char, worldEntries);
-  
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = `Bearer ${apiConfig.apiKey}`;
-  }
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: apiConfig.model || defaultConfig.model,
-      messages: apiMessages,
-      temperature: apiConfig.temperature ?? defaultConfig.temperature,
-      stream: false
-    })
+  const platform = ApiHandler.inferPlatform(apiConfig);
+  const model = apiConfig.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
+  const payload = ApiHandler.generateChatPayload(platform, apiConfig.endpoint, apiConfig.apiKey, model, apiMessages, {
+    temperature: apiConfig.temperature ?? defaultConfig.temperature
   });
+  const requestUrl = apiConfig.corsProxyMode ? ApiHandler.applyCorsProxy(payload.url) : payload.url;
 
+  const response = await fetch(requestUrl, payload.options);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`);
+    throw new Error(`HTTP ${response.status}${text ? `: ${text.slice(0, 240)}` : ""}`);
   }
 
   const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content || data?.message?.content || data?.reply || data?.content;
+  const content = ApiHandler.parseChatResponse(platform, data);
   if (!content) throw new Error("接口返回内容为空");
   return String(content).trim();
 }
@@ -773,23 +873,6 @@ function handleCharacterSubmit(event) {
     boundWorldBookIds: boundWorldBookIds
   };
 
-  event.preventDefault();
-  const id = elements.characterId.value.trim() || "char-" + Date.now();
-  const name = elements.characterName.value.trim();
-  const avatar = elements.characterAvatar.value.trim() || name[0];
-  const color = elements.characterColor.value;
-  const title = elements.characterTitle.value.trim();
-  const tags = elements.characterTags.value.trim();
-  const intro = elements.characterIntro.value.trim();
-  const greeting = elements.characterGreeting.value.trim();
-  const system = elements.characterSystem.value.trim();
-
-  const newChar = {
-    id: id, name: name, avatar: avatar, color: color,
-    soft: convertHexToRgba(color, 0.3),
-    title: title, tags: tags, intro: intro, greeting: greeting, system: system
-  };
-
   const existingIndex = appState.characters.findIndex(c => c.id === id);
   if (existingIndex >= 0) {
     appState.characters[existingIndex] = newChar;
@@ -805,7 +888,8 @@ function handleCharacterSubmit(event) {
   saveState();
   closeCharacterDrawer();
   
-  populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
+  populateScopeSelect();
+  populateModelsDropdown();
   renderCharactersStrip();
   renderActivePersonaCard();
   renderCharacterList();
@@ -862,7 +946,8 @@ function renderCharacterList() {
           appState.activeCharacterId = appState.characters[0].id;
         }
         saveState();
-        populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
+        populateScopeSelect();
+        populateModelsDropdown();
         renderCharactersStrip();
         renderActivePersonaCard();
         renderCharacterList();
@@ -1040,99 +1125,30 @@ function resetToDefaults() {
 
 async function populateModelsDropdown() {
   const select = elements.model;
-  select.innerHTML = "<option value=\x22fetching\x22>正在从上游API获取模型列表...</option>";
-  
-  // overridden
-  
-  let modelsUrl = endpoint.replace("/chat/completions", "/models");
-  if (apiConfig.corsProxyMode) {
-    modelsUrl = "https://cors-anywhere.azm.workers.dev/" + modelsUrl;
+  select.innerHTML = "<option value=\x22fetching\x22>正在从上游 API 获取模型列表...</option>";
+  const platform = ApiHandler.inferPlatform(apiConfig);
+  const fallbackModels = platform === "gemini" ? ApiHandler.geminiFallbackModels : ApiHandler.fallbackModels;
+  let models = fallbackModels;
+
+  try {
+    models = await ApiHandler.fetchModels(platform, apiConfig.endpoint, apiConfig.apiKey, {
+      corsProxyMode: apiConfig.corsProxyMode
+    });
+    if (!models.length) throw new Error("列表为空");
+  } catch (e) {
+    models = fallbackModels;
   }
 
-  
-  const headers = { "Content-Type": "application/json" };
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = "Bearer " + apiConfig.apiKey;
-  }
-  
-  const fallbackModels = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "claude-3-5-sonnet"];
-  
-  try {
-    const response = await fetch(modelsUrl, { method: "GET", headers });
-    if (!response.ok) throw new Error("获取模型失败");
-    const data = await response.json();
-    const models = (data.data || []).map(m => m.id || m).filter(Boolean);
-    
-    if (models.length === 0) throw new Error("列表为空");
-    
-    select.innerHTML = models.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  } catch (e) {
-    select.innerHTML = fallbackModels.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  }
-  
-  // 绑定切换手动输入逻辑
-  select.onchange = () => {
-    if (select.value === "custom") {
-      elements.apiModelCustom.style.display = "block";
-    } else {
-      elements.apiModelCustom.style.display = "none";
-    }
-  };
-  
-  // 恢复之前选择的模型
-  const savedModel = apiConfig.model || defaultConfig.model;
-  if ([...select.options].some(opt => opt.value === savedModel)) {
-    select.value = savedModel;
-    elements.apiModelCustom.style.display = "none";
-  } else if (savedModel) {
-    select.value = "custom";
-    elements.apiModelCustom.style.display = "block";
-    elements.apiModelCustom.value = savedModel;
-  }
-}
+  select.innerHTML = models
+    .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+    .join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
 
-async function populateModelsDropdown() {
-  const select = elements.model;
-  select.innerHTML = "<option value=\x22fetching\x22>正在从上游API获取模型列表...</option>";
-  
-  const endpoint = apiConfig.endpoint || defaultConfig.endpoint;
-  let modelsUrl = endpoint.replace("/chat/completions", "/models");
-  if (apiConfig.corsProxyMode) {
-    modelsUrl = "https://cors-anywhere.azm.workers.dev/" + modelsUrl;
-  }
-  
-  const headers = { "Content-Type": "application/json" };
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = "Bearer " + apiConfig.apiKey;
-  }
-  
-  const fallbackModels = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "claude-3-5-sonnet"];
-  
-  try {
-    const response = await fetch(modelsUrl, { method: "GET", headers });
-    if (!response.ok) throw new Error("获取模型失败");
-    const data = await response.json();
-    const models = (data.data || []).map(m => m.id || m).filter(Boolean);
-    
-    if (models.length === 0) throw new Error("列表为空");
-    
-    select.innerHTML = models.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  } catch (e) {
-    select.innerHTML = fallbackModels.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  }
-  
-  // 绑定切换手动输入逻辑
   select.onchange = () => {
-    if (select.value === "custom") {
-      elements.apiModelCustom.style.display = "block";
-    } else {
-      elements.apiModelCustom.style.display = "none";
-    }
+    elements.apiModelCustom.style.display = select.value === "custom" ? "block" : "none";
   };
-  
-  // 恢复之前选择的模型
+
   const savedModel = apiConfig.model || defaultConfig.model;
-  if ([...select.options].some(opt => opt.value === savedModel)) {
+  if ([...select.options].some((opt) => opt.value === savedModel)) {
     select.value = savedModel;
     elements.apiModelCustom.style.display = "none";
   } else if (savedModel) {
