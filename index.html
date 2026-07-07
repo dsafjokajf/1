@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6fbfa">
   <title>Mianer 恋人小手机</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23ff7f8d'/%3E%3Cpath d='M20 23c0-5 4-9 9-9 3 0 5 1 7 4 2-3 4-4 7-4 5 0 9 4 9 9 0 11-16 21-16 21S20 34 20 23Z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="session-upgrade.css">
 </head>
@@ -67,6 +68,15 @@
 
               <form class="composer" id="chatForm">
                 <label class="sr-only" for="chatInput">输入消息</label>
+                <button class="plus-button" id="plusButton" type="button" title="更多" aria-label="更多功能">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <div class="quote-preview" id="quotePreview" hidden>
+                  <span id="quotePreviewText"></span>
+                  <button class="quote-clear" id="clearQuoteButton" type="button" title="取消引用" aria-label="取消引用">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                  </button>
+                </div>
                 <textarea id="chatInput" rows="1" maxlength="1600" placeholder="对他说点什么..." autocomplete="off"></textarea>
                 <button class="reply-button" id="replyButton" type="button" title="点击AI回复" aria-label="点击AI回复"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg></button>
                 <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送消息">
@@ -107,6 +117,17 @@
             <div class="list" id="worldList"></div>
           </section>
 
+          <section class="view moments-view" id="view-moments" data-view="moments" aria-label="朋友圈">
+            <div class="section-head compact">
+              <div>
+                <h1>朋友圈</h1>
+                <p id="momentsCount">0 条动态</p>
+              </div>
+              <button class="solid-button" id="addMomentButton" type="button">发动态</button>
+            </div>
+            <div class="moments-feed" id="momentsFeed"></div>
+          </section>
+
           <section class="view settings-view" id="view-settings" data-view="settings" aria-label="设置">
             <div class="section-head compact">
               <div>
@@ -141,17 +162,18 @@
                 </label>
                 <label>
                   <span>温度</span>
-                  <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" placeholder="0.85">
+                  <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.01" placeholder="0.85" inputmode="decimal">
                 </label>
               </div>
               <label class="checkline">
                 <input id="rememberKey" name="rememberKey" type="checkbox">
-                <span>在本机记住 Key</span></label><label class="checkline"><input id="manualReplyMode" name="manualReplyMode" type="checkbox"><span>手动点击按钮才会回复</span>
+                <span>在本机记住 Key</span>
               </label>
               <label class="checkline">
-                <input id="proxyMode" name="proxyMode" type="checkbox">
-                <span>代理不需要前端 Key</span></label><label class="checkline"><input id="corsProxyMode" name="corsProxyMode" type="checkbox"><span>跨域(CORS)应急兼容模式(通过中转请求)</span>
+                <input id="manualReplyMode" name="manualReplyMode" type="checkbox"><span>手动点击按钮才会回复</span>
               </label>
+              <input id="proxyMode" name="proxyMode" type="hidden" value="false">
+              <input id="corsProxyMode" name="corsProxyMode" type="hidden" value="false">
               <div class="button-row">
                 <button class="ghost-button" id="testButton" type="button">测试</button>
                 <button class="solid-button" type="submit">保存</button>
@@ -178,6 +200,9 @@
           </button>
           <button class="tab" type="button" data-tab="world" aria-label="世界书">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21V5.5Z"/><path d="M5 5.5V21"/></svg><span>世界书</span>
+          </button>
+          <button class="tab" type="button" data-tab="moments" aria-label="朋友圈">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/><path d="M7.5 12h9M12 7.5v9"/></svg><span>朋友圈</span>
           </button>
           <button class="tab" type="button" data-tab="settings" aria-label="设置">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"/><path d="m19 12 2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-1.6-.9L14.7 4H9.3L9 7.1a7.5 7.5 0 0 0-1.6.9L5 7l-2 3.5L5 12l-2 1.5L5 17l2.4-1a7.5 7.5 0 0 0 1.6.9l.3 3.1h5.4l.3-3.1a7.5 7.5 0 0 0 1.6-.9L19 17l2-3.5L19 12Z"/></svg><span>设置</span>
@@ -242,6 +267,10 @@
                 <textarea id="userPersona" rows="6" maxlength="1600" placeholder="写你的称呼、身份、关系、说话习惯和偏好"></textarea>
               </label>
               <label>
+                <span>指令</span>
+                <textarea id="userInstruction" rows="4" maxlength="1200" placeholder="你希望角色长期遵守的说话方式、边界或互动规则"></textarea>
+              </label>
+              <label>
                 <span>拍一拍</span>
                 <input id="userNudge" type="text" maxlength="40" placeholder="的脑袋" autocomplete="off">
               </label>
@@ -269,36 +298,38 @@
               <div class="three-fields">
                 <label>
                   <span>名字</span>
-                  <input id="characterName" type="text" maxlength="24" required>
+                  <input id="characterName" type="text" maxlength="24" placeholder="未命名联系人">
                 </label>
                 <label>
                   <span>头像字</span>
-                  <input id="characterAvatar" type="text" maxlength="2" required>
+                  <input id="characterAvatar" type="text" maxlength="2" placeholder="TA">
                 </label>
                 <label>
                   <span>主色</span>
-                  <input id="characterColor" type="color" required>
+                  <input id="characterColor" type="color">
                 </label>
               </div>
-              <label>
-                <span>身份</span>
-                <input id="characterTitle" type="text" maxlength="40" required>
-              </label>
+              <input id="characterTitle" type="hidden">
+              <div class="mode-switches" aria-label="模式切换">
+                <label class="mode-chip"><input id="modeOnline" name="characterMode" value="online" type="checkbox" checked><span>线上模式</span></label>
+                <label class="mode-chip"><input id="modeOffline" name="characterMode" value="offline" type="checkbox"><span>线下模式</span></label>
+                <label class="mode-chip"><input id="modeInnerVoice" name="characterMode" value="innerVoice" type="checkbox"><span>心声模式</span></label>
+                <label class="mode-chip"><input id="modeDistance" name="characterMode" value="distance" type="checkbox"><span>异地模式</span></label>
+              </div>
               <label>
                 <span>标签</span>
                 <input id="characterTags" type="text" placeholder="温柔, 克制, 会哄人">
               </label>
               <label>
                 <span>简介</span>
-                <textarea id="characterIntro" rows="2" maxlength="180" required></textarea>
+                <textarea id="characterIntro" rows="2" maxlength="180" placeholder="可留空"></textarea>
               </label>
               <label>
                 <span>开场白</span>
-                <textarea id="characterGreeting" rows="3" maxlength="420" required></textarea>
+                <textarea id="characterGreeting" rows="3" maxlength="420" placeholder="可留空，不填就不会自动生成开场消息"></textarea>
               </label>
-              <label>
-                <span>联系人提示词</span>
-                <textarea id="characterSystem" rows="7" maxlength="2600" required></textarea></label><label><span>绑定/关联世界书设定项目</span><div id="characterWorldBooks" style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto; background: rgba(24,32,42,0.03); border: 1px solid rgba(24,32,42,0.08); padding: 10px; border-radius: 14px; margin-top: 5px;"></div>
+              <textarea id="characterSystem" hidden></textarea>
+              <label><span>绑定/关联世界书设定项目</span><div id="characterWorldBooks" style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto; background: rgba(24,32,42,0.03); border: 1px solid rgba(24,32,42,0.08); padding: 10px; border-radius: 14px; margin-top: 5px;"></div>
               </label>
               <div class="button-row sticky-actions">
                 <button class="ghost-button" id="duplicateCharacterButton" type="button">复制</button>
@@ -323,7 +354,7 @@
               <input id="worldId" type="hidden">
               <label>
                 <span>标题</span>
-                <input id="worldTitle" type="text" maxlength="50" required>
+                <input id="worldTitle" type="text" maxlength="50" placeholder="未命名设定">
               </label>
               <div class="two-fields">
                 <label>
@@ -332,7 +363,7 @@
                 </label>
                 <label>
                   <span>优先级</span>
-                  <input id="worldPriority" type="number" min="0" max="100" step="1" required>
+                  <input id="worldPriority" type="number" min="0" max="100" step="1" placeholder="10">
                 </label>
               </div>
               <label>
@@ -349,12 +380,62 @@
               </label>
               <label>
                 <span>设定内容</span>
-                <textarea id="worldContent" rows="8" maxlength="2600" required></textarea>
+                <textarea id="worldContent" rows="8" maxlength="2600" placeholder="可留空"></textarea>
               </label>
               <div class="button-row sticky-actions">
                 <button class="ghost-button" id="duplicateWorldButton" type="button">复制</button>
                 <button class="solid-button" type="submit">保存条目</button>
               </div>
+            </form>
+          </div>
+        </aside>
+
+        <aside class="drawer" id="momentDrawer" aria-hidden="true" aria-label="发布朋友圈">
+          <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="momentDrawerTitle">
+            <div class="drawer-head">
+              <div>
+                <h2 id="momentDrawerTitle">发动态</h2>
+                <p>这一条会保存在本机朋友圈里。</p>
+              </div>
+              <button class="icon-button" id="closeMomentDrawer" type="button" title="关闭" aria-label="关闭朋友圈编辑">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <form class="editor-form" id="momentForm">
+              <label>
+                <span>内容</span>
+                <textarea id="momentContent" rows="5" maxlength="600" placeholder="写一条朋友圈"></textarea>
+              </label>
+              <label>
+                <span>可见角色</span>
+                <select id="momentAudience"></select>
+              </label>
+              <div class="button-row sticky-actions">
+                <button class="ghost-button" id="clearMomentButton" type="button">清空</button>
+                <button class="solid-button" type="submit">发布</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+
+        <aside class="action-sheet" id="transferSheet" aria-hidden="true" aria-label="转账">
+          <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="transferSheetTitle">
+            <div class="sheet-head">
+              <h2 id="transferSheetTitle">转账</h2>
+              <button class="icon-button" id="closeTransferSheet" type="button" title="关闭" aria-label="关闭转账">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <form class="transfer-form" id="transferForm">
+              <label class="amount-field">
+                <span>￥</span>
+                <input id="transferAmount" type="number" min="0.01" max="999999" step="0.01" inputmode="decimal" placeholder="0.00">
+              </label>
+              <label>
+                <span>转账说明</span>
+                <input id="transferNote" type="text" maxlength="40" placeholder="不用写也可以">
+              </label>
+              <button class="transfer-submit" type="submit">确认转账</button>
             </form>
           </div>
         </aside>

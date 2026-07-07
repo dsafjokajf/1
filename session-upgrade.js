@@ -184,6 +184,7 @@ function sessionNormalizeState(parsed) {
     ? parsed.characters.map(sessionNormalizeCharacter)
     : defaultCharacters.map(sessionNormalizeCharacter);
   const worldBook = Array.isArray(parsed.worldBook) ? parsed.worldBook : defaultWorldEntries;
+  const moments = Array.isArray(parsed.moments) ? parsed.moments.map(normalizeMomentData).filter(Boolean) : makeDefaultMoments();
   const activeCharacterId = characters.some((char) => char.id === parsed.activeCharacterId) ? parsed.activeCharacterId : characters[0].id;
   const legacyMessages = parsed.messages && typeof parsed.messages === "object" ? parsed.messages : {};
   const rawSessions = parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {};
@@ -204,26 +205,11 @@ function sessionNormalizeState(parsed) {
     ? parsed.archives.map((archive) => sessionNormalizeArchive(archive, characters)).filter(Boolean)
     : [];
 
-  return { activeCharacterId, characters, worldBook, messages, sessions, currentSessionIds, archives };
+  return { activeCharacterId, characters, worldBook, moments, messages, sessions, currentSessionIds, archives };
 }
 
 function sessionNormalizeCharacter(char) {
-  const name = String(char.name || "联系人").trim();
-  const color = char.color || "#ff7f8d";
-  return {
-    ...char,
-    id: String(char.id || "char-" + Date.now()).trim(),
-    name,
-    avatar: char.avatar || name.slice(0, 1) || "TA",
-    color,
-    soft: char.soft || convertHexToRgba(color, 0.28),
-    role: char.role || (char.tags || "").split(/[,，]/).map((item) => item.trim()).filter(Boolean)[0] || char.title || "自定义角色",
-    title: char.title || char.intro || "聊天联系人",
-    tags: char.tags || "",
-    intro: char.intro || char.title || "",
-    greeting: char.greeting || "我在。想和我说点什么？",
-    system: char.system || "请像真实联系人一样，用中文自然回复用户。"
-  };
+  return normalizeCharacterData(char);
 }
 
 function sessionNormalizeSession(session, char) {
@@ -258,18 +244,12 @@ function sessionNormalizeArchive(archive, characters) {
 }
 
 function sessionNormalizeMessages(messages, char) {
-  const list = Array.isArray(messages) ? messages.map(sessionCloneMessage).filter((message) => message.content || message.loading) : [];
-  return list.length ? list : [assistantMessage(char.greeting, "开场")];
+  const list = Array.isArray(messages) ? messages.map(sessionCloneMessage).filter((message) => message.content || message.loading || message.type !== "text") : [];
+  return list.length || !char.greeting ? list : [assistantMessage(char.greeting, "开场")];
 }
 
 function sessionCloneMessage(message) {
-  return {
-    role: message.role === "user" ? "user" : "assistant",
-    content: String(message.content || ""),
-    meta: message.meta || "",
-    time: Number(message.time) || Date.now(),
-    loading: Boolean(message.loading)
-  };
+  return normalizeMessageData(message);
 }
 
 function sessionMakeFromMessages(char, messages, title, loadedArchiveId) {
@@ -287,7 +267,7 @@ function sessionMakeFromMessages(char, messages, title, loadedArchiveId) {
 }
 
 function sessionCreateBlank(char) {
-  return sessionMakeFromMessages(char, [assistantMessage(char.greeting, "开场")], "新聊天", "");
+  return sessionMakeFromMessages(char, char.greeting ? [assistantMessage(char.greeting, "开场")] : [], "新聊天", "");
 }
 
 function sessionCreateId(prefix) {
@@ -333,6 +313,7 @@ function sessionSaveState() {
     activeCharacterId: appState.activeCharacterId,
     characters: appState.characters,
     worldBook: appState.worldBook,
+    moments: appState.moments || [],
     messages: appState.messages,
     sessions: appState.sessions,
     currentSessionIds: appState.currentSessionIds,
@@ -425,7 +406,7 @@ function sessionRenderActivePersonaCard() {
   const tagsHtml = (char.tags || "").split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
   const roleText = char.role || (char.tags || "").split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || "自定义角色";
   elements.activePersona.innerHTML = `
-    <div class="avatar-big" style="background:${escapeHtml(char.color)}"><span>${escapeHtml(char.avatar || char.name[0])}</span></div>
+    <button class="avatar-big" data-active-avatar-nudge="1" type="button" style="background:${escapeHtml(char.color)}" title="拍一拍" aria-label="拍一拍${escapeHtml(char.name)}"><span>${escapeHtml(char.avatar || char.name[0])}</span></button>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
       <p>${escapeHtml(roleText)} · ${escapeHtml(char.title || char.intro || "")}</p>
@@ -436,6 +417,7 @@ function sessionRenderActivePersonaCard() {
     </button>
   `;
   document.querySelector("#editActivePersonaButton")?.addEventListener("click", () => openCharacterDrawer(char));
+  elements.activePersona.querySelector("[data-active-avatar-nudge]")?.addEventListener("dblclick", () => sendNudge(char));
 }
 
 function sessionRenderMessages() {
@@ -443,6 +425,7 @@ function sessionRenderMessages() {
   const char = sessionGetActiveCharacter();
   const session = sessionGetCurrentSession(char.id);
   elements.messages.innerHTML = session.messages.map((message) => renderMessage(message, char)).join("");
+  bindRenderedMessageActions(elements.messages, char, session.messages);
   elements.messages.scrollTop = elements.messages.scrollHeight;
   sessionRenderConversationTitle();
 }
@@ -453,7 +436,8 @@ async function sessionHandleSubmit(event) {
   if (!content || isSending) return;
   const char = sessionGetActiveCharacter();
   const session = sessionGetCurrentSession(char.id);
-  session.messages.push(userMessage(content));
+  session.messages.push(userMessage(content, currentQuote));
+  clearCurrentQuote();
   session.updatedAt = Date.now();
   elements.chatInput.value = "";
   autosizeInput();
@@ -484,7 +468,7 @@ async function sessionReplyToUser(char, content) {
   sessionRenderMessages();
   const worldEntries = triggerWorldBook(content, char.id);
   try {
-    const useApi = Boolean(apiConfig.apiKey) || apiConfig.proxyMode;
+    const useApi = Boolean(apiConfig.apiKey);
     const reply = useApi ? await callChatApi(char, worldEntries) : sessionLocalReply(char);
     const chunks = useApi ? splitAssistantReply(reply) : [reply];
     if (!chunks.length) throw new Error("接口返回内容为空");
@@ -540,9 +524,9 @@ function sessionBuildApiMessages(char, worldEntries, options = {}) {
     return [{ role: "system", content: systemPrompt }, { role: "user", content: "测试一下接口是否能正常回复，请只说连接正常。" }];
   }
   const history = sessionGetCurrentSession(char.id).messages
-    .filter((message) => !message.loading && message.content)
+    .filter((message) => !message.loading && message.content && message.type !== "system")
     .slice(-24)
-    .map((message) => ({ role: message.role, content: message.content }));
+    .map((message) => ({ role: message.role, content: message.quote ? `引用${message.quote.author}：${message.quote.text}\n${message.content}` : message.content }));
   return [{ role: "system", content: systemPrompt }, ...history];
 }
 
@@ -708,7 +692,7 @@ function sessionDeleteCharacter(id) {
 function sessionHandleCharacterSubmit(event) {
   event.preventDefault();
   const id = elements.characterId.value.trim() || "char-" + Date.now();
-  const name = elements.characterName.value.trim();
+  const name = elements.characterName.value.trim() || "未命名联系人";
   const color = elements.characterColor.value;
   const tags = elements.characterTags.value.trim();
   const existingChar = appState.characters.find((char) => char.id === id);
@@ -717,14 +701,15 @@ function sessionHandleCharacterSubmit(event) {
     id,
     name,
     color,
-    avatar: elements.characterAvatar.value.trim() || name[0],
+    avatar: elements.characterAvatar.value.trim() || name[0] || "TA",
     soft: convertHexToRgba(color, 0.3),
-    role: existingChar?.role || tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || elements.characterTitle.value.trim() || "自定义角色",
-    title: elements.characterTitle.value.trim(),
+    role: tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || elements.characterIntro.value.trim() || existingChar?.role || "自定义联系人",
+    title: elements.characterIntro.value.trim(),
     tags,
     intro: elements.characterIntro.value.trim(),
     greeting: elements.characterGreeting.value.trim(),
     system: elements.characterSystem.value.trim(),
+    mode: readCharacterModeForm(),
     boundWorldBookIds: Array.from(checkedBoxes).map((checkbox) => checkbox.value)
   });
   const existingIndex = appState.characters.findIndex((char) => char.id === id);

@@ -64,6 +64,10 @@ const elements = {
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
   sendButton: document.querySelector("#sendButton"),
+  plusButton: document.querySelector("#plusButton"),
+  quotePreview: document.querySelector("#quotePreview"),
+  quotePreviewText: document.querySelector("#quotePreviewText"),
+  clearQuoteButton: document.querySelector("#clearQuoteButton"),
   userPersonaButton: document.querySelector("#userPersonaButton"),
   
   // 选项卡
@@ -109,6 +113,7 @@ const elements = {
   userNick: document.querySelector("#userNick"),
   userAvatarText: document.querySelector("#userAvatarText"),
   userNudge: document.querySelector("#userNudge"),
+  userInstruction: document.querySelector("#userInstruction"),
   resetUserPersonaButton: document.querySelector("#resetUserPersonaButton"),
 
   // 编辑抽屉
@@ -138,6 +143,22 @@ const elements = {
   worldEnabled: document.querySelector("#worldEnabled"),
   worldContent: document.querySelector("#worldContent"),
   duplicateWorldButton: document.querySelector("#duplicateWorldButton"),
+
+  momentsCount: document.querySelector("#momentsCount"),
+  momentsFeed: document.querySelector("#momentsFeed"),
+  addMomentButton: document.querySelector("#addMomentButton"),
+  momentDrawer: document.querySelector("#momentDrawer"),
+  closeMomentDrawer: document.querySelector("#closeMomentDrawer"),
+  momentForm: document.querySelector("#momentForm"),
+  momentContent: document.querySelector("#momentContent"),
+  momentAudience: document.querySelector("#momentAudience"),
+  clearMomentButton: document.querySelector("#clearMomentButton"),
+
+  transferSheet: document.querySelector("#transferSheet"),
+  transferForm: document.querySelector("#transferForm"),
+  closeTransferSheet: document.querySelector("#closeTransferSheet"),
+  transferAmount: document.querySelector("#transferAmount"),
+  transferNote: document.querySelector("#transferNote"),
   
   // 世界书命中提示栏
   worldHints: document.querySelector("#worldHints")
@@ -153,7 +174,8 @@ const defaultConfig = {
   corsProxyMode: false,
   manualReplyMode: false,
   customModelName: "",
-  userPersona: ""
+  userPersona: "",
+  userInstruction: ""
 };
 
 const ApiHandler = {
@@ -300,8 +322,10 @@ const ApiHandler = {
 let appState = loadSessionState();
 let apiConfig = loadConfig();
 let isSending = false;
+let currentQuote = null;
 
 initSessionUpgrade();
+initializeExtraFeatures();
 
 function init() {
   updateClock();
@@ -451,6 +475,122 @@ function saveState() {
   localStorage.setItem(storageKey, JSON.stringify(appState));
 }
 
+function normalizeCharacterMode(mode) {
+  const defaults = { online: true, offline: false, innerVoice: false, distance: false };
+  if (!mode || typeof mode !== "object") return { ...defaults };
+  return {
+    online: mode.online !== false,
+    offline: Boolean(mode.offline),
+    innerVoice: Boolean(mode.innerVoice),
+    distance: Boolean(mode.distance)
+  };
+}
+
+function normalizeCharacterData(char) {
+  const name = String(char?.name || "未命名联系人").trim() || "未命名联系人";
+  const color = char?.color || "#ff7f8d";
+  const tags = String(char?.tags || "").trim();
+  const intro = String(char?.intro || char?.title || "").trim();
+  const mode = normalizeCharacterMode(char?.mode);
+  const role = char?.role || tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || intro || "自定义联系人";
+  return {
+    ...char,
+    id: String(char?.id || "char-" + Date.now()).trim(),
+    name,
+    avatar: String(char?.avatar || name.slice(0, 1) || "TA").trim().slice(0, 2) || "TA",
+    color,
+    soft: char?.soft || convertHexToRgba(color, 0.28),
+    role,
+    title: intro,
+    tags,
+    intro,
+    greeting: String(char?.greeting || "").trim(),
+    system: String(char?.system || "").trim(),
+    mode,
+    boundWorldBookIds: Array.isArray(char?.boundWorldBookIds) ? char.boundWorldBookIds : []
+  };
+}
+
+function normalizeMessageData(message) {
+  const type = ["text", "transfer", "system"].includes(message?.type) ? message.type : "text";
+  const quote = message?.quote && typeof message.quote === "object"
+    ? { author: String(message.quote.author || ""), text: String(message.quote.text || "").slice(0, 180) }
+    : null;
+  return {
+    role: message?.role === "user" ? "user" : "assistant",
+    content: String(message?.content || ""),
+    meta: message?.meta || "",
+    time: Number(message?.time) || Date.now(),
+    loading: Boolean(message?.loading),
+    type,
+    quote,
+    transfer: type === "transfer" && message?.transfer ? message.transfer : null
+  };
+}
+
+function getCharacterModeLabels(mode) {
+  const normalized = normalizeCharacterMode(mode);
+  const labels = [];
+  if (normalized.online) labels.push("线上");
+  if (normalized.offline) labels.push("线下");
+  if (normalized.innerVoice) labels.push("心声");
+  if (normalized.distance) labels.push("异地");
+  return labels;
+}
+
+function setCharacterModeForm(mode) {
+  const normalized = normalizeCharacterMode(mode);
+  document.querySelectorAll("input[name='characterMode']").forEach((input) => {
+    input.checked = Boolean(normalized[input.value]);
+  });
+}
+
+function readCharacterModeForm() {
+  const mode = { online: false, offline: false, innerVoice: false, distance: false };
+  document.querySelectorAll("input[name='characterMode']").forEach((input) => {
+    mode[input.value] = input.checked;
+  });
+  if (!mode.online && !mode.offline && !mode.innerVoice && !mode.distance) mode.online = true;
+  return mode;
+}
+
+function normalizeAppStateData(state) {
+  appState.characters = (Array.isArray(state.characters) && state.characters.length ? state.characters : defaultCharacters).map(normalizeCharacterData);
+  appState.worldBook = Array.isArray(state.worldBook) ? state.worldBook : defaultWorldEntries;
+  appState.moments = Array.isArray(state.moments) ? state.moments.map(normalizeMomentData).filter(Boolean) : makeDefaultMoments();
+  if (!appState.moments.length) appState.moments = makeDefaultMoments();
+  if (!appState.characters.some((char) => char.id === state.activeCharacterId)) appState.activeCharacterId = appState.characters[0].id;
+  const messages = state.messages && typeof state.messages === "object" ? state.messages : {};
+  appState.messages = {};
+  appState.characters.forEach((char) => {
+    const list = Array.isArray(messages[char.id]) ? messages[char.id].map(normalizeMessageData).filter((message) => message.content || message.loading || message.type !== "text") : [];
+    appState.messages[char.id] = list.length || !char.greeting ? list : [assistantMessage(char.greeting, "开场")];
+  });
+}
+
+function makeDefaultMoments() {
+  return defaultCharacters.slice(0, 2).map((char, index) => normalizeMomentData({
+    id: "moment-" + char.id,
+    authorId: char.id,
+    content: index === 0 ? "今天也有好好想你。" : "把乱糟糟的日子揉软一点，留给你。", 
+    time: Date.now() - (index + 1) * 3600000,
+    likes: index ? ["我"] : [],
+    comments: []
+  }));
+}
+
+function normalizeMomentData(moment) {
+  if (!moment || typeof moment !== "object") return null;
+  return {
+    id: String(moment.id || "moment-" + Date.now() + Math.random().toString(36).slice(2, 7)),
+    authorId: String(moment.authorId || "user"),
+    content: String(moment.content || "").trim(),
+    time: Number(moment.time) || Date.now(),
+    likes: Array.isArray(moment.likes) ? moment.likes.map(String) : [],
+    comments: Array.isArray(moment.comments) ? moment.comments.map((comment) => ({ author: String(comment.author || "我"), text: String(comment.text || "") })).filter((comment) => comment.text) : []
+  };
+}
+
 function loadConfig() {
   try {
     const parsed = JSON.parse(localStorage.getItem(configKey) || "{}");
@@ -469,6 +609,9 @@ function loadConfig() {
       endpoint: parsed.endpoint || legacyEndpoint || ApiHandler.getDefaultEndpoint(platform) || "",
       model: parsed.model || legacyModel || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model),
       userPersona: legacyPersona || parsed.userPersona || "",
+      userInstruction: parsed.userInstruction || localStorage.getItem("user_instruction") || "",
+      proxyMode: false,
+      corsProxyMode: false,
       apiKey: rememberedKey || sessionKey || legacyKey || ""
     };
   } catch {
@@ -486,14 +629,15 @@ function readConfigFromForm() {
     platform,
     endpoint: elements.endpoint.value.trim() || ApiHandler.getDefaultEndpoint(platform) || "",
     model,
-    temperature: clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2),
+    temperature: Number(clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2).toFixed(2)),
     rememberKey: elements.rememberKey.checked,
-    proxyMode: elements.proxyMode.checked,
-    corsProxyMode: elements.corsProxyMode.checked,
+    proxyMode: false,
+    corsProxyMode: false,
     apiKey: elements.apiKey.value.trim(),
     manualReplyMode: elements.manualReplyMode.checked,
     customModelName: customModel,
-    userPersona: elements.userPersona.value.trim()
+    userPersona: elements.userPersona.value.trim(),
+    userInstruction: elements.userInstruction?.value.trim() || ""
   };
 }
 
@@ -510,7 +654,8 @@ function saveConfigFromForm() {
     corsProxyMode: apiConfig.corsProxyMode,
     manualReplyMode: apiConfig.manualReplyMode,
     customModelName: apiConfig.customModelName,
-    userPersona: apiConfig.userPersona
+    userPersona: apiConfig.userPersona,
+    userInstruction: apiConfig.userInstruction
   }));
 
   const keyStore = apiConfig.rememberKey ? localStorage : sessionStorage;
@@ -525,6 +670,7 @@ function saveConfigFromForm() {
   if (apiConfig.apiKey) localStorage.setItem("apiKey", apiConfig.apiKey);
   else localStorage.removeItem("apiKey");
   localStorage.setItem("user_persona", apiConfig.userPersona || "");
+  localStorage.setItem("user_instruction", apiConfig.userInstruction || "");
 }
 
 function syncConfigForm() {
@@ -534,11 +680,12 @@ function syncConfigForm() {
   elements.temperature.value = apiConfig.temperature ?? defaultConfig.temperature;
   elements.apiKey.value = apiConfig.apiKey || "";
   elements.rememberKey.checked = Boolean(apiConfig.rememberKey);
-  elements.proxyMode.checked = Boolean(apiConfig.proxyMode);
-  elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode);
+  if (elements.proxyMode) elements.proxyMode.checked = false;
+  if (elements.corsProxyMode) elements.corsProxyMode.checked = false;
   elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode);
   elements.apiModelCustom.value = apiConfig.customModelName || "";
   elements.userPersona.value = apiConfig.userPersona || "";
+  if (elements.userInstruction) elements.userInstruction.value = apiConfig.userInstruction || "";
   elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
   elements.manualReplyMode.addEventListener("change", () => {
     elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
@@ -551,7 +698,8 @@ function getUserProfile(config = apiConfig) {
   const avatarText = (localStorage.getItem("user_avatar_text") || nick.slice(0, 2) || "我").trim().slice(0, 2) || "我";
   const persona = (localStorage.getItem("user_persona") || config?.userPersona || "").trim();
   const nudge = (localStorage.getItem("user_nudge") || "的脑袋").trim() || "的脑袋";
-  return { nick, avatarText, persona, nudge };
+  const instruction = (localStorage.getItem("user_instruction") || config?.userInstruction || "").trim();
+  return { nick, avatarText, persona, nudge, instruction };
 }
 
 function openUserPersonaDrawer() {
@@ -559,6 +707,7 @@ function openUserPersonaDrawer() {
   elements.userNick.value = user.nick === "玩家" ? "" : user.nick;
   elements.userAvatarText.value = user.avatarText;
   elements.userPersona.value = user.persona;
+  if (elements.userInstruction) elements.userInstruction.value = user.instruction;
   elements.userNudge.value = user.nudge;
   elements.userPersonaDrawer.classList.add("is-open");
   elements.userPersonaDrawer.setAttribute("aria-hidden", "false");
@@ -570,12 +719,13 @@ function closeUserPersonaDrawer() {
   elements.userPersonaDrawer.setAttribute("aria-hidden", "true");
 }
 
-function persistUserPersona(persona) {
-  apiConfig = { ...apiConfig, userPersona: persona };
+function persistUserPersona(persona, instruction = apiConfig.userInstruction || "") {
+  apiConfig = { ...apiConfig, userPersona: persona, userInstruction: instruction };
   let stored = {};
   try { stored = JSON.parse(localStorage.getItem(configKey) || "{}"); } catch { stored = {}; }
-  localStorage.setItem(configKey, JSON.stringify({ ...stored, userPersona: persona }));
+  localStorage.setItem(configKey, JSON.stringify({ ...stored, userPersona: persona, userInstruction: instruction }));
   localStorage.setItem("user_persona", persona);
+  localStorage.setItem("user_instruction", instruction);
 }
 
 function saveUserPersonaFromForm(event) {
@@ -583,11 +733,12 @@ function saveUserPersonaFromForm(event) {
   const nick = elements.userNick.value.trim() || "玩家";
   const avatarText = (elements.userAvatarText.value.trim() || nick.slice(0, 2) || "我").slice(0, 2);
   const persona = elements.userPersona.value.trim();
+  const instruction = elements.userInstruction?.value.trim() || "";
   const nudge = elements.userNudge.value.trim() || "的脑袋";
   localStorage.setItem("user_nick", nick);
   localStorage.setItem("user_avatar_text", avatarText);
   localStorage.setItem("user_nudge", nudge);
-  persistUserPersona(persona);
+  persistUserPersona(persona, instruction);
   updateConnectionLabel("User 人设已保存");
   closeUserPersonaDrawer();
   setTimeout(() => updateConnectionLabel(), 2000);
@@ -598,11 +749,12 @@ function resetUserPersonaForm() {
   elements.userNick.value = "";
   elements.userAvatarText.value = "我";
   elements.userPersona.value = "";
+  if (elements.userInstruction) elements.userInstruction.value = "";
   elements.userNudge.value = "的脑袋";
   localStorage.removeItem("user_nick");
   localStorage.setItem("user_avatar_text", "我");
   localStorage.setItem("user_nudge", "的脑袋");
-  persistUserPersona("");
+  persistUserPersona("", "");
 }
 
 function updateConnectionLabel(status) {
@@ -612,9 +764,7 @@ function updateConnectionLabel(status) {
     elements.connectionState.textContent = status;
     return;
   }
-  if (apiConfig.proxyMode) {
-    elements.connectionState.textContent = "极速无Key模式";
-  } else if (!hasKey) {
+  if (!hasKey) {
     elements.connectionState.textContent = "本地陪伴";
   } else if (endpoint.includes("workers.dev") || endpoint.includes("vercel") || endpoint.includes("netlify")) {
     elements.connectionState.textContent = "云端伙伴";
@@ -658,9 +808,9 @@ function renderActivePersonaCard() {
   const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || "自定义角色";
   
   elements.activePersona.innerHTML = `
-    <div class="avatar-big" style="background:${char.color}">
+    <button class="avatar-big" data-active-avatar-nudge="1" type="button" style="background:${char.color}" title="拍一拍" aria-label="拍一拍${escapeHtml(char.name)}">
       <span>${escapeHtml(char.avatar || char.name[0])}</span>
-    </div>
+    </button>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
       <p class="role-desc">${escapeHtml(roleText)} · ${escapeHtml(char.title || char.intro || "")}</p>
@@ -674,21 +824,29 @@ function renderActivePersonaCard() {
   document.querySelector("#editActivePersonaButton").addEventListener("click", () => {
     openCharacterDrawer(char);
   });
+  elements.activePersona.querySelector("[data-active-avatar-nudge]")?.addEventListener("dblclick", () => sendNudge(char));
 }
 
 function renderMessages() {
   const char = getActiveCharacter();
   const messages = appState.messages[char.id] || [];
   elements.messages.innerHTML = messages.map((m) => renderMessage(m, char)).join("");
+  bindRenderedMessageActions(elements.messages, char, messages);
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
 function renderMessage(m, char) {
   const isAssistant = m.role === "assistant";
+  if (m.type === "system") {
+    return `<article class="message-notice" data-message-id="${escapeHtml(String(m.time))}">${formatRichText(m.content)}</article>`;
+  }
+  const quote = m.quote ? `<div class="quoted-line"><strong>${escapeHtml(m.quote.author || "引用")}</strong><span>${escapeHtml(m.quote.text || "")}</span></div>` : "";
+  const avatar = isAssistant ? `<button class="bubble-avatar" data-avatar-nudge="1" type="button" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</button>` : "";
+  const body = m.loading ? `<span class="typing"><i></i><i></i><i></i></span>` : (m.type === "transfer" ? renderTransferBubble(m) : quote + formatRichText(m.content));
   return `
-    <article class="message ${isAssistant ? "assistant" : "user"}">
-      ${isAssistant ? `<span class="bubble-avatar" style="background:${char.color}">${escapeHtml(char.avatar || char.name[0])}</span>` : ""}
-      <div class="bubble">${m.loading ? `<span class="typing"><i></i><i></i><i></i></span>` : formatRichText(m.content)}</div>
+    <article class="message ${isAssistant ? "assistant" : "user"}" data-message-id="${escapeHtml(String(m.time))}">
+      ${avatar}
+      <div class="bubble ${m.type === "transfer" ? "transfer-bubble" : ""}">${body}</div>
       <span class="message-meta">${escapeHtml(m.meta || formatTime(m.time))}</span>
     </article>
   `;
@@ -696,6 +854,280 @@ function renderMessage(m, char) {
 
 function formatRichText(text) {
   return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
+function renderTransferBubble(message) {
+  const amount = Number(message.transfer?.amount || 0).toFixed(2);
+  const note = message.transfer?.note ? `<p>${escapeHtml(message.transfer.note)}</p>` : "";
+  return `<div class="transfer-card"><span class="transfer-icon">￥</span><div><strong>转账 ￥${escapeHtml(amount)}</strong>${note}<small>微信转账</small></div></div>`;
+}
+
+function bindRenderedMessageActions(container, char, messages) {
+  if (!container) return;
+  container.querySelectorAll("[data-avatar-nudge]").forEach((avatar) => {
+    avatar.addEventListener("dblclick", () => sendNudge(char));
+  });
+  container.querySelectorAll(".message[data-message-id]").forEach((node) => {
+    let timer = null;
+    const open = (event) => {
+      const message = messages.find((item) => String(item.time) === node.dataset.messageId);
+      if (message && !message.loading) showMessageMenu(event, message, char);
+    };
+    node.addEventListener("contextmenu", (event) => { event.preventDefault(); open(event); });
+    node.addEventListener("pointerdown", (event) => {
+      timer = setTimeout(() => open(event), 520);
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((name) => node.addEventListener(name, () => clearTimeout(timer)));
+  });
+}
+
+function showMessageMenu(event, message, char) {
+  closeMessageMenu();
+  const menu = document.createElement("div");
+  menu.className = "message-menu";
+  menu.innerHTML = `<button type="button" data-action="quote">引用</button><button type="button" data-action="recall">撤回</button>`;
+  document.body.appendChild(menu);
+  const rect = document.querySelector(".screen")?.getBoundingClientRect() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  const x = Math.min(Math.max(event.clientX || rect.left + 80, rect.left + 12), rect.right - 132);
+  const y = Math.min(Math.max(event.clientY || rect.top + 220, rect.top + 48), rect.bottom - 80);
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  menu.querySelector("[data-action='quote']").addEventListener("click", () => {
+    setCurrentQuote(message, char);
+    closeMessageMenu();
+  });
+  menu.querySelector("[data-action='recall']").addEventListener("click", () => {
+    recallMessage(message, char);
+    closeMessageMenu();
+  });
+  setTimeout(() => {
+    document.addEventListener("pointerdown", function handleOutside(pointerEvent) {
+      if (pointerEvent.target.closest(".message-menu")) {
+        document.addEventListener("pointerdown", handleOutside, { once: true });
+        return;
+      }
+      closeMessageMenu();
+    }, { once: true });
+  }, 0);
+}
+
+function closeMessageMenu() {
+  document.querySelectorAll(".message-menu").forEach((menu) => menu.remove());
+}
+
+function setCurrentQuote(message, char) {
+  currentQuote = {
+    author: message.role === "user" ? getUserProfile().nick : char.name,
+    text: message.type === "transfer" ? "[转账] " + (message.transfer?.amount || "") : String(message.content || "").slice(0, 180)
+  };
+  renderQuotePreview();
+  elements.chatInput?.focus();
+}
+
+function renderQuotePreview() {
+  if (!elements.quotePreview || !elements.quotePreviewText) return;
+  if (!currentQuote) {
+    elements.quotePreview.hidden = true;
+    elements.quotePreviewText.textContent = "";
+    return;
+  }
+  elements.quotePreview.hidden = false;
+  elements.quotePreviewText.textContent = `${currentQuote.author}: ${currentQuote.text}`;
+}
+
+function clearCurrentQuote() {
+  currentQuote = null;
+  renderQuotePreview();
+}
+
+function recallMessage(message, char) {
+  const notice = systemNotice(`${message.role === "user" ? "你" : char.name}撤回了一条消息`);
+  appendMessageToActiveSession(notice);
+  saveState();
+  renderMessages();
+}
+
+function systemNotice(content) {
+  return { role: "assistant", type: "system", content, meta: "", time: Date.now() };
+}
+
+function sendNudge(char) {
+  const user = getUserProfile();
+  appendMessageToActiveSession(systemNotice(`${user.nick}拍了拍${char.name}${user.nudge || ""}`));
+  saveState();
+  renderMessages();
+}
+
+function appendMessageToActiveSession(message) {
+  const char = getActiveCharacter();
+  ensureMessageList(char.id);
+  if (typeof sessionGetCurrentSession === "function" && appState.sessions) {
+    const session = sessionGetCurrentSession(char.id);
+    session.messages.push(message);
+    session.updatedAt = Date.now();
+    appState.messages[char.id] = session.messages.map(normalizeMessageData);
+    return;
+  }
+  appState.messages[char.id].push(message);
+}
+
+function initializeExtraFeatures() {
+  populateMomentAudience();
+  renderMoments();
+  elements.clearQuoteButton?.addEventListener("click", clearCurrentQuote);
+  elements.plusButton?.addEventListener("click", openTransferSheet);
+  elements.closeTransferSheet?.addEventListener("click", closeTransferSheet);
+  elements.transferSheet?.addEventListener("click", (event) => {
+    if (event.target === elements.transferSheet) closeTransferSheet();
+  });
+  elements.transferForm?.addEventListener("submit", submitTransfer);
+  elements.addMomentButton?.addEventListener("click", openMomentDrawer);
+  elements.closeMomentDrawer?.addEventListener("click", closeMomentDrawer);
+  elements.momentDrawer?.addEventListener("click", (event) => {
+    if (event.target === elements.momentDrawer) closeMomentDrawer();
+  });
+  elements.momentForm?.addEventListener("submit", submitMoment);
+  elements.clearMomentButton?.addEventListener("click", () => { if (elements.momentContent) elements.momentContent.value = ""; });
+}
+
+function openTransferSheet() {
+  if (!elements.transferSheet) return;
+  elements.transferAmount.value = "";
+  elements.transferNote.value = "";
+  elements.transferSheet.classList.add("is-open");
+  elements.transferSheet.setAttribute("aria-hidden", "false");
+  setTimeout(() => elements.transferAmount?.focus(), 60);
+}
+
+function closeTransferSheet() {
+  elements.transferSheet?.classList.remove("is-open");
+  elements.transferSheet?.setAttribute("aria-hidden", "true");
+}
+
+function submitTransfer(event) {
+  event.preventDefault();
+  const amount = Number(elements.transferAmount?.value || 0);
+  if (!amount || amount <= 0) return;
+  const note = elements.transferNote?.value.trim() || "";
+  appendMessageToActiveSession({
+    role: "user",
+    type: "transfer",
+    content: `转账 ￥${amount.toFixed(2)}${note ? " " + note : ""}`,
+    transfer: { amount: Number(amount.toFixed(2)), note, status: "sent" },
+    quote: currentQuote,
+    time: Date.now()
+  });
+  clearCurrentQuote();
+  closeTransferSheet();
+  saveState();
+  renderMessages();
+  if (typeof sessionRenderChatList === "function") sessionRenderChatList();
+}
+
+function populateMomentAudience() {
+  if (!elements.momentAudience) return;
+  const options = [{ id: "user", name: getUserProfile().nick }, ...appState.characters];
+  elements.momentAudience.innerHTML = options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("");
+}
+
+function openMomentDrawer() {
+  populateMomentAudience();
+  if (elements.momentContent) elements.momentContent.value = "";
+  if (elements.momentAudience) elements.momentAudience.value = "user";
+  elements.momentDrawer?.classList.add("is-open");
+  elements.momentDrawer?.setAttribute("aria-hidden", "false");
+  setTimeout(() => elements.momentContent?.focus(), 60);
+}
+
+function closeMomentDrawer() {
+  elements.momentDrawer?.classList.remove("is-open");
+  elements.momentDrawer?.setAttribute("aria-hidden", "true");
+}
+
+function submitMoment(event) {
+  event.preventDefault();
+  const content = elements.momentContent?.value.trim() || "";
+  if (!content) return;
+  appState.moments.unshift(normalizeMomentData({
+    id: "moment-" + Date.now(),
+    authorId: elements.momentAudience?.value || "user",
+    content,
+    time: Date.now(),
+    likes: [],
+    comments: []
+  }));
+  saveState();
+  closeMomentDrawer();
+  renderMoments();
+}
+
+function renderMoments() {
+  if (!elements.momentsFeed) return;
+  const moments = Array.isArray(appState.moments) ? appState.moments : [];
+  if (elements.momentsCount) elements.momentsCount.textContent = `${moments.length} 条动态`;
+  if (!moments.length) {
+    elements.momentsFeed.innerHTML = `<div class="empty-state">还没有朋友圈动态。</div>`;
+    return;
+  }
+  elements.momentsFeed.innerHTML = moments.map(renderMomentCard).join("");
+  elements.momentsFeed.querySelectorAll("[data-like-moment]").forEach((button) => button.addEventListener("click", () => toggleMomentLike(button.dataset.likeMoment)));
+  elements.momentsFeed.querySelectorAll("[data-comment-moment]").forEach((button) => button.addEventListener("click", () => commentMoment(button.dataset.commentMoment)));
+  elements.momentsFeed.querySelectorAll("[data-delete-moment]").forEach((button) => button.addEventListener("click", () => deleteMoment(button.dataset.deleteMoment)));
+}
+
+function renderMomentCard(moment) {
+  const author = moment.authorId === "user" ? { name: getUserProfile().nick, avatar: getUserProfile().avatarText, color: "#1f2b38" } : appState.characters.find((char) => char.id === moment.authorId) || appState.characters[0];
+  const liked = moment.likes.includes("我");
+  const likes = moment.likes.length ? `<div class="moment-likes">${escapeHtml(moment.likes.join("、"))}</div>` : "";
+  const comments = moment.comments.map((comment) => `<p><strong>${escapeHtml(comment.author)}</strong> ${escapeHtml(comment.text)}</p>`).join("");
+  const canDelete = moment.authorId === "user";
+  return `
+    <article class="moment-card">
+      <div class="moment-avatar" style="background:${escapeHtml(author.color)}">${escapeHtml(author.avatar || author.name?.[0] || "我")}</div>
+      <div class="moment-body">
+        <div class="moment-head"><strong>${escapeHtml(author.name)}</strong><time>${escapeHtml(formatMomentTime(moment.time))}</time></div>
+        <p class="moment-text">${formatRichText(moment.content)}</p>
+        <div class="moment-actions">
+          <button type="button" data-like-moment="${escapeHtml(moment.id)}">${liked ? "取消" : "赞"}</button>
+          <button type="button" data-comment-moment="${escapeHtml(moment.id)}">评论</button>
+          ${canDelete ? `<button type="button" data-delete-moment="${escapeHtml(moment.id)}">删除</button>` : ""}
+        </div>
+        ${(likes || comments) ? `<div class="moment-social">${likes}${comments}</div>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function toggleMomentLike(id) {
+  const moment = appState.moments.find((item) => item.id === id);
+  if (!moment) return;
+  const index = moment.likes.indexOf("我");
+  if (index >= 0) moment.likes.splice(index, 1);
+  else moment.likes.push("我");
+  saveState();
+  renderMoments();
+}
+
+function commentMoment(id) {
+  const moment = appState.moments.find((item) => item.id === id);
+  if (!moment) return;
+  const text = prompt("评论内容");
+  if (!text || !text.trim()) return;
+  moment.comments.push({ author: getUserProfile().nick, text: text.trim() });
+  saveState();
+  renderMoments();
+}
+
+function deleteMoment(id) {
+  if (!confirm("删除这条朋友圈吗？")) return;
+  appState.moments = appState.moments.filter((moment) => moment.id !== id);
+  saveState();
+  renderMoments();
+}
+
+function formatMomentTime(timestamp) {
+  const date = new Date(timestamp || Date.now());
+  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function splitAssistantReply(text) {
@@ -742,7 +1174,8 @@ async function handleSubmit(event) {
   const char = getActiveCharacter();
   ensureMessageList(char.id);
   
-  appState.messages[char.id].push(userMessage(content));
+  appState.messages[char.id].push(userMessage(content, currentQuote));
+  clearCurrentQuote();
   elements.chatInput.value = "";
   autosizeInput();
   saveState();
@@ -817,7 +1250,7 @@ async function replyToUser(char, content) {
 
   try {
     const hasKey = Boolean(apiConfig.apiKey);
-    const useApi = hasKey || apiConfig.proxyMode;
+    const useApi = hasKey;
     const reply = useApi ? await callChatApi(char, worldEntries) : localReply(char);
     const chunks = useApi ? splitAssistantReply(reply) : [reply];
     if (chunks.length === 0) throw new Error("接口返回内容为空");
@@ -856,8 +1289,8 @@ async function callChatApi(char, worldEntries) {
 
 async function callChatApiWithOptions(char, worldEntries, options = {}) {
   const config = options.config || apiConfig;
-  if (!config.apiKey && !config.proxyMode) {
-    throw new Error("请先填写 API Key，或开启代理不需要前端 Key 模式。");
+  if (!config.apiKey) {
+    throw new Error("请先填写 API Key。");
   }
 
   if ((config.platform || ApiHandler.inferPlatform(config)) === "MyAPI" && !config.endpoint) {
@@ -870,7 +1303,7 @@ async function callChatApiWithOptions(char, worldEntries, options = {}) {
   const payload = ApiHandler.generateChatPayload(platform, config.endpoint, config.apiKey, model, apiMessages, {
     temperature: config.temperature ?? defaultConfig.temperature
   });
-  const requestUrl = config.corsProxyMode ? ApiHandler.applyCorsProxy(payload.url) : payload.url;
+  const requestUrl = payload.url;
 
   const response = await fetchWithRetry(requestUrl, payload.options);
   if (!response.ok) {
@@ -917,15 +1350,18 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   const userProfile = getUserProfile(options.config || apiConfig);
   const userPersona = (options.config?.userPersona || userProfile.persona || apiConfig.userPersona || "").trim();
   const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || char.title || "自定义联系人";
+  const modeLabels = getCharacterModeLabels(char.mode);
   const lines = [
     `你正在扮演通讯录里的联系人「${char.name}」，和用户在手机聊天界面里私聊。`,
     `【用户称呼】${userProfile.nick}`,
     `【联系人身份】${roleText}`,
+    modeLabels.length ? `【当前模式】${modeLabels.join("、")}` : "",
     char.title ? `【联系人标题】${char.title}` : "",
     char.tags ? `【联系人标签】${char.tags}` : "",
     char.intro ? `【联系人简介】${char.intro}` : "",
     char.system ? `【联系人提示词】${char.system}` : "",
     userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
+    userProfile.instruction ? `【用户指令】${userProfile.instruction}` : "",
     userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
   ].filter(Boolean);
 
@@ -1007,11 +1443,11 @@ function replaceLoadingMessage(charId, replacement) {
 }
 
 function assistantMessage(content, meta) {
-  return { role: "assistant", content, meta, time: Date.now() };
+  return { role: "assistant", type: "text", content, meta, time: Date.now() };
 }
 
-function userMessage(content) {
-  return { role: "user", content, time: Date.now() };
+function userMessage(content, quote = null) {
+  return { role: "user", type: "text", content, quote, time: Date.now() };
 }
 
 function autosizeInput() {
@@ -1080,6 +1516,7 @@ function openCharacterDrawer(char = null) {
     elements.characterIntro.value = char.intro || "";
     elements.characterGreeting.value = char.greeting || "";
     elements.characterSystem.value = char.system || "";
+    setCharacterModeForm(char.mode);
     elements.duplicateCharacterButton.style.display = "block";
   } else {
     document.getElementById("characterDrawerTitle").textContent = "添加联系人";
@@ -1092,6 +1529,7 @@ function openCharacterDrawer(char = null) {
     elements.characterIntro.value = "";
     elements.characterGreeting.value = "";
     elements.characterSystem.value = "";
+    setCharacterModeForm();
     elements.duplicateCharacterButton.style.display = "none";
   }
   elements.characterDrawer.classList.add("is-open");
@@ -1107,8 +1545,8 @@ function closeCharacterDrawer() {
 function handleCharacterSubmit(event) {
   event.preventDefault();
   const id = elements.characterId.value.trim() || "char-" + Date.now();
-  const name = elements.characterName.value.trim();
-  const avatar = elements.characterAvatar.value.trim() || name[0];
+  const name = elements.characterName.value.trim() || "未命名联系人";
+  const avatar = elements.characterAvatar.value.trim() || name[0] || "TA";
   const color = elements.characterColor.value;
   const title = elements.characterTitle.value.trim();
   const tags = elements.characterTags.value.trim();
@@ -1116,18 +1554,19 @@ function handleCharacterSubmit(event) {
   const greeting = elements.characterGreeting.value.trim();
   const system = elements.characterSystem.value.trim();
   const existingChar = appState.characters.find(c => c.id === id);
-  const role = existingChar?.role || tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || title || "自定义角色";
+  const mode = readCharacterModeForm();
+  const role = tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || intro || existingChar?.role || "自定义联系人";
 
   // 读取绑定的世界书选择项
   const checkedBoxes = document.querySelectorAll("input[name=\x22boundWorldBooks\x22]:checked");
   const boundWorldBookIds = Array.from(checkedBoxes).map(cb => cb.value);
 
-  const newChar = {
-    id: id, name: name, avatar: avatar, color: color,
+  const newChar = normalizeCharacterData({
+    id, name, avatar, color,
     soft: convertHexToRgba(color, 0.3),
-    role: role, title: title, tags: tags, intro: intro, greeting: greeting, system: system,
-    boundWorldBookIds: boundWorldBookIds
-  };
+    role, title: intro || title, tags, intro, greeting, system, mode,
+    boundWorldBookIds
+  });
 
   const existingIndex = appState.characters.findIndex(c => c.id === id);
   if (existingIndex >= 0) {
@@ -1138,7 +1577,7 @@ function handleCharacterSubmit(event) {
 
   ensureMessageList(id);
   if (appState.messages[id].length === 0) {
-    appState.messages[id] = [assistantMessage(greeting, "开场")];
+    appState.messages[id] = greeting ? [assistantMessage(greeting, "开场")] : [];
   }
 
   saveState();
@@ -1259,7 +1698,7 @@ function handleWorldSubmit(event) {
 
   const newEntry = {
     id: id,
-    title: title,
+    title: title || "未命名设定",
     scope: scope,
     priority: priority,
     keywords: keywords,
@@ -1301,16 +1740,17 @@ function renderWorldList() {
   elements.worldList.innerHTML = filtered.map((entry) => {
     const scopeChar = appState.characters.find(c => c.id === entry.scope);
     const scopeLabel = scopeChar ? scopeChar.name : "全部角色";
-    return "<div class=\"card world-card " + (entry.enabled ? "" : "disabled") + "\">" +
+    const preview = entry.content.length > 68 ? entry.content.slice(0, 68) + "..." : entry.content;
+    return "<div class=\"card world-card compact-world " + (entry.enabled ? "" : "disabled") + "\">" +
       "<div class=\"card-info\">" +
         "<div class=\"world-card-header\">" +
           "<h3>" + escapeHtml(entry.title) + "</h3>" +
           "<span class=\"scope-tag\">" + escapeHtml(scopeLabel) + "</span>" +
         "</div>" +
         "<p class=\"world-keywords\"><b>关键词:</b> " + escapeHtml(entry.keywords || "无 (仅始终注入)") + "</p>" +
-        "<p class=\"card-intro world-content-preview\">" + escapeHtml(entry.content) + "</p>" +
+        "<p class=\"card-intro world-content-preview\">" + escapeHtml(preview || "空设定") + "</p>" +
       "</div>" +
-      "<div class=\"card-actions\">" +
+      "<div class=\"card-actions world-actions\">" +
         "<button class=\"ghost-button compact edit-world-btn\" data-id=\"" + entry.id + "\">编辑</button>" +
         "<button class=\"danger-button compact delete-world-btn\" data-id=\"" + entry.id + "\">删除</button>" +
       "</div>" +
