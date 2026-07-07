@@ -36,9 +36,9 @@
 
         <section class="viewport" aria-live="polite">
           <section class="view chat-view is-active" id="view-chat" data-view="chat" aria-label="聊天">
-            <nav class="character-strip" id="characterStrip" aria-label="选择角色"></nav>
+            <nav class="character-strip" id="characterStrip" aria-label="选择联系人"></nav>
 
-            <section class="active-persona" id="activePersona" aria-label="当前角色"></section>
+            <section class="active-persona" id="activePersona" aria-label="当前联系人"></section>
 
             <section class="world-hints" id="worldHints" aria-label="已命中的世界书"></section>
 
@@ -53,13 +53,13 @@
             </form>
           </section>
 
-          <section class="view library-view" id="view-characters" data-view="characters" aria-label="角色库">
+          <section class="view library-view" id="view-characters" data-view="characters" aria-label="通讯录">
             <div class="section-head">
               <div>
-                <h1>角色</h1>
-                <p id="characterCount">0 个角色</p>
+                <h1>通讯录</h1>
+                <p id="characterCount">0 个联系人</p>
               </div>
-              <button class="solid-button" id="addCharacterButton" type="button">添加角色</button>
+              <button class="solid-button" id="addCharacterButton" type="button">添加联系人</button>
             </div>
             <div class="list" id="characterList"></div>
           </section>
@@ -83,7 +83,7 @@
             <div class="section-head compact">
               <div>
                 <h1>设置</h1>
-                <p>OpenAI 兼容接口</p>
+                <p>接口、会话和人设</p>
               </div>
             </div>
 
@@ -106,13 +106,17 @@
                   <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" placeholder="0.85">
                 </label>
               </div>
+              <label>
+                <span>我的人设</span>
+                <textarea id="userPersona" name="userPersona" rows="4" maxlength="1200" placeholder="写你的称呼、身份、关系、说话习惯和偏好"></textarea>
+              </label>
               <label class="checkline">
                 <input id="rememberKey" name="rememberKey" type="checkbox">
                 <span>在本机记住 Key</span></label><label class="checkline"><input id="manualReplyMode" name="manualReplyMode" type="checkbox"><span>手动点击按钮才会回复</span>
               </label>
               <label class="checkline">
                 <input id="proxyMode" name="proxyMode" type="checkbox">
-                <span>代理不需要前端 Key</span></label><label class="checkline"><input id="corsProxyMode" name="proxyMode" type="checkbox"><span>跨域(CORS)应急兼容模式(通过中转请求)</span>
+                <span>代理不需要前端 Key</span></label><label class="checkline"><input id="corsProxyMode" name="corsProxyMode" type="checkbox"><span>跨域(CORS)应急兼容模式(通过中转请求)</span>
               </label>
               <div class="button-row">
                 <button class="ghost-button" id="testButton" type="button">测试</button>
@@ -135,8 +139,8 @@
           <button class="tab is-active" type="button" data-tab="chat" aria-label="聊天">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14v9H9l-4 4V6Z"/></svg><span>聊天</span>
           </button>
-          <button class="tab" type="button" data-tab="characters" aria-label="角色">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-4 14.5-4 16 0"/></svg><span>角色</span>
+          <button class="tab" type="button" data-tab="characters" aria-label="通讯录">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-4 14.5-4 16 0"/></svg><span>通讯录</span>
           </button>
           <button class="tab" type="button" data-tab="world" aria-label="世界书">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21V5.5Z"/><path d="M5 5.5V21"/></svg><span>世界书</span>
@@ -146,14 +150,14 @@
           </button>
         </nav>
 
-        <aside class="drawer" id="characterDrawer" aria-hidden="true" aria-label="编辑角色">
+        <aside class="drawer" id="characterDrawer" aria-hidden="true" aria-label="编辑联系人">
           <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="characterDrawerTitle">
             <div class="drawer-head">
               <div>
-                <h2 id="characterDrawerTitle">编辑角色</h2>
-                <p>他的性格、开场白和提示词都会保存到本机。</p>
+                <h2 id="characterDrawerTitle">编辑联系人</h2>
+                <p>TA 的性格、开场白和提示词都会保存到本机。</p>
               </div>
-              <button class="icon-button" id="closeCharacterDrawer" type="button" title="关闭" aria-label="关闭角色编辑">
+              <button class="icon-button" id="closeCharacterDrawer" type="button" title="关闭" aria-label="关闭联系人编辑">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
               </button>
             </div>
@@ -190,12 +194,12 @@
                 <textarea id="characterGreeting" rows="3" maxlength="420" required></textarea>
               </label>
               <label>
-                <span>角色提示词</span>
+                <span>联系人提示词</span>
                 <textarea id="characterSystem" rows="7" maxlength="2600" required></textarea></label><label><span>绑定/关联世界书设定项目</span><div id="characterWorldBooks" style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto; background: rgba(24,32,42,0.03); border: 1px solid rgba(24,32,42,0.08); padding: 10px; border-radius: 14px; margin-top: 5px;"></div>
               </label>
               <div class="button-row sticky-actions">
                 <button class="ghost-button" id="duplicateCharacterButton" type="button">复制</button>
-                <button class="solid-button" type="submit">保存角色</button>
+                <button class="solid-button" type="submit">保存联系人</button>
               </div>
             </form>
           </div>
@@ -206,7 +210,7 @@
             <div class="drawer-head">
               <div>
                 <h2 id="worldDrawerTitle">编辑世界书</h2>
-                <p>命中关键词后会注入到角色提示词里。</p>
+                <p>命中关键词后会注入到当前联系人的提示词里。</p>
               </div>
               <button class="icon-button" id="closeWorldDrawer" type="button" title="关闭" aria-label="关闭世界书编辑">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>

@@ -89,7 +89,12 @@ const elements = {
   model: document.querySelector("#apiModel"),
   temperature: document.querySelector("#temperature"),
   rememberKey: document.querySelector("#rememberKey"),
-  proxyMode: document.querySelector("#proxyMode"), corsProxyMode: document.querySelector("#corsProxyMode"), manualReplyMode: document.querySelector("#manualReplyMode"), replyButton: document.querySelector("#replyButton"), apiModelCustom: document.querySelector("#apiModelCustom"),
+  proxyMode: document.querySelector("#proxyMode"),
+  corsProxyMode: document.querySelector("#corsProxyMode"),
+  manualReplyMode: document.querySelector("#manualReplyMode"),
+  replyButton: document.querySelector("#replyButton"),
+  apiModelCustom: document.querySelector("#apiModelCustom"),
+  userPersona: document.querySelector("#userPersona"),
   testButton: document.querySelector("#testButton"),
   settingsNote: document.querySelector("#settingsNote"),
   exportButton: document.querySelector("#exportButton"),
@@ -137,7 +142,8 @@ const defaultConfig = {
   proxyMode: false,
   corsProxyMode: false,
   manualReplyMode: false,
-  customModelName: ""
+  customModelName: "",
+  userPersona: ""
 };
 
 const ApiHandler = {
@@ -270,7 +276,6 @@ function init() {
   
   // 载入选项
   populateScopeSelect();
-  populateModelsDropdown();
   
   renderCharactersStrip();
   renderActivePersonaCard();
@@ -279,6 +284,7 @@ function init() {
   renderWorldList();
   
   syncConfigForm();
+  populateModelsDropdown();
   updateConnectionLabel();
   bindEvents();
   autosizeInput();
@@ -288,6 +294,7 @@ function bindEvents() {
   elements.endpoint.addEventListener("change", populateModelsDropdown);
   elements.apiKey.addEventListener("change", populateModelsDropdown);
   elements.corsProxyMode.addEventListener("change", populateModelsDropdown);
+  elements.proxyMode.addEventListener("change", populateModelsDropdown);
   elements.chatForm.addEventListener("submit", handleSubmit);
   elements.chatInput.addEventListener("input", autosizeInput);
   elements.chatInput.addEventListener("keydown", (event) => {
@@ -418,25 +425,38 @@ function loadConfig() {
   }
 }
 
-function saveConfigFromForm() {
-  apiConfig = {
+function readConfigFromForm() {
+  const selectedModel = elements.model.value;
+  const customModel = elements.apiModelCustom.value.trim();
+  let model = selectedModel === "custom" ? customModel : selectedModel;
+  if (!model || model === "fetching") model = customModel || apiConfig.model || defaultConfig.model;
+  return {
     endpoint: elements.endpoint.value.trim() || defaultConfig.endpoint,
-    model: (elements.model.value === "custom" ? elements.apiModelCustom.value.trim() : elements.model.value) || defaultConfig.model,
+    model,
     temperature: clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2),
     rememberKey: elements.rememberKey.checked,
     proxyMode: elements.proxyMode.checked,
     corsProxyMode: elements.corsProxyMode.checked,
     apiKey: elements.apiKey.value.trim(),
     manualReplyMode: elements.manualReplyMode.checked,
-    customModelName: elements.apiModelCustom.value.trim()
+    customModelName: customModel,
+    userPersona: elements.userPersona.value.trim()
   };
+}
+
+function saveConfigFromForm() {
+  apiConfig = readConfigFromForm();
 
   localStorage.setItem(configKey, JSON.stringify({
     endpoint: apiConfig.endpoint,
     model: apiConfig.model,
     temperature: apiConfig.temperature,
     rememberKey: apiConfig.rememberKey,
-    proxyMode: apiConfig.proxyMode, corsProxyMode: apiConfig.corsProxyMode, manualReplyMode: apiConfig.manualReplyMode, customModelName: apiConfig.customModelName
+    proxyMode: apiConfig.proxyMode,
+    corsProxyMode: apiConfig.corsProxyMode,
+    manualReplyMode: apiConfig.manualReplyMode,
+    customModelName: apiConfig.customModelName,
+    userPersona: apiConfig.userPersona
   }));
 
   const keyStore = apiConfig.rememberKey ? localStorage : sessionStorage;
@@ -456,6 +476,7 @@ function syncConfigForm() {
   elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode);
   elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode);
   elements.apiModelCustom.value = apiConfig.customModelName || "";
+  elements.userPersona.value = apiConfig.userPersona || "";
   elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
   elements.manualReplyMode.addEventListener("change", () => {
     elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
@@ -512,6 +533,7 @@ function renderActivePersonaCard() {
   document.documentElement.style.setProperty("--active-soft", char.soft || "rgba(255,127,141,0.18)");
   
   const tagsHtml = (char.tags || "").split(/[,，]/).filter(t => t.trim()).map(t => `<span class="tag-label">${escapeHtml(t.trim())}</span>`).join("");
+  const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || "自定义角色";
   
   elements.activePersona.innerHTML = `
     <div class="avatar-big" style="background:${char.color}">
@@ -519,7 +541,7 @@ function renderActivePersonaCard() {
     </div>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
-      <p class="role-desc">${escapeHtml(char.role)} · ${escapeHtml(char.title)}</p>
+      <p class="role-desc">${escapeHtml(roleText)} · ${escapeHtml(char.title || char.intro || "")}</p>
       <div class="tags-row">${tagsHtml}</div>
     </div>
     <button class="icon-button" id="editActivePersonaButton" type="button" title="编辑设定">
@@ -552,6 +574,42 @@ function renderMessage(m, char) {
 
 function formatRichText(text) {
   return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
+function splitAssistantReply(text) {
+  const cleaned = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/^(?:AI|assistant|回复)[:：]\s*/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!cleaned) return [];
+
+  const normalizePart = (part) => part.replace(/^[-*•\d.、)）\s]+/, "").trim();
+  const splitAfter = (value, punctuationPattern) => {
+    const out = [];
+    let buf = "";
+    for (const ch of value) {
+      buf += ch;
+      if (punctuationPattern.test(ch)) {
+        out.push(buf);
+        buf = "";
+      }
+    }
+    if (buf.trim()) out.push(buf);
+    return out.map(normalizePart).filter(Boolean);
+  };
+  const fromLines = cleaned.split(/\n+/).map(normalizePart).filter(Boolean);
+  if (fromLines.length >= 2) return fromLines.slice(0, 6);
+
+  let parts = splitAfter(cleaned, /[。！？!?]/);
+  if (parts.length < 2 && cleaned.length > 28) {
+    parts = splitAfter(cleaned, /[，,；;]/);
+  }
+  return (parts.length >= 2 ? parts : [cleaned]).slice(0, 6);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function handleSubmit(event) {
@@ -639,8 +697,18 @@ async function replyToUser(char, content) {
     const hasKey = Boolean(apiConfig.apiKey);
     const useApi = hasKey || apiConfig.proxyMode;
     const reply = useApi ? await callChatApi(char, worldEntries) : localReply(char);
-    
-    replaceLoadingMessage(char.id, assistantMessage(reply, useApi ? "API" : "本地陪伴"));
+    const chunks = useApi ? splitAssistantReply(reply) : [reply];
+    if (chunks.length === 0) throw new Error("接口返回内容为空");
+
+    replaceLoadingMessage(char.id, assistantMessage(chunks[0], useApi ? "API" : "本地陪伴"));
+    saveState();
+    renderMessages();
+    for (const chunk of chunks.slice(1)) {
+      await sleep(Math.min(1800, 320 + chunk.length * 45));
+      appState.messages[char.id].push(assistantMessage(chunk, useApi ? "API" : "本地陪伴"));
+      saveState();
+      renderMessages();
+    }
     updateConnectionLabel(useApi ? "回复完毕" : "本地回复");
   } catch (error) {
     const fallback = apiFailureReply(error);
@@ -661,19 +729,24 @@ async function replyToUser(char, content) {
 
 
 async function callChatApi(char, worldEntries) {
-  if (!apiConfig.apiKey && !apiConfig.proxyMode) {
+  return callChatApiWithOptions(char, worldEntries);
+}
+
+async function callChatApiWithOptions(char, worldEntries, options = {}) {
+  const config = options.config || apiConfig;
+  if (!config.apiKey && !config.proxyMode) {
     throw new Error("请先填写 API Key，或开启代理不需要前端 Key 模式。");
   }
 
-  const apiMessages = buildApiMessages(char, worldEntries);
-  const platform = ApiHandler.inferPlatform(apiConfig);
-  const model = apiConfig.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
-  const payload = ApiHandler.generateChatPayload(platform, apiConfig.endpoint, apiConfig.apiKey, model, apiMessages, {
-    temperature: apiConfig.temperature ?? defaultConfig.temperature
+  const apiMessages = buildApiMessages(char, worldEntries, options);
+  const platform = ApiHandler.inferPlatform(config);
+  const model = config.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
+  const payload = ApiHandler.generateChatPayload(platform, config.endpoint, config.apiKey, model, apiMessages, {
+    temperature: config.temperature ?? defaultConfig.temperature
   });
-  const requestUrl = apiConfig.corsProxyMode ? ApiHandler.applyCorsProxy(payload.url) : payload.url;
+  const requestUrl = config.corsProxyMode ? ApiHandler.applyCorsProxy(payload.url) : payload.url;
 
-  const response = await fetch(requestUrl, payload.options);
+  const response = await fetchWithRetry(requestUrl, payload.options);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`HTTP ${response.status}${text ? `: ${text.slice(0, 240)}` : ""}`);
@@ -685,26 +758,65 @@ async function callChatApi(char, worldEntries) {
   return String(content).trim();
 }
 
-function buildApiMessages(char, worldEntries) {
-  const history = appState.messages[char.id]
-    .filter((m) => !m.loading)
-    .slice(-12)
-    .map((m) => ({ role: m.role, content: m.content }));
+async function fetchWithRetry(url, options) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok || (response.status < 500 && response.status !== 429)) return response;
+      lastError = response;
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(700);
+  }
+  if (lastError instanceof Response) return lastError;
+  throw lastError;
+}
 
-  let systemPrompt = char.system;
-  
+function buildSystemPrompt(char, worldEntries, options = {}) {
+  const userPersona = (options.config?.userPersona || apiConfig.userPersona || "").trim();
+  const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || char.title || "自定义联系人";
+  const lines = [
+    `你正在扮演通讯录里的联系人「${char.name}」，和用户在手机聊天界面里私聊。`,
+    `【联系人身份】${roleText}`,
+    char.title ? `【联系人标题】${char.title}` : "",
+    char.tags ? `【联系人标签】${char.tags}` : "",
+    char.intro ? `【联系人简介】${char.intro}` : "",
+    char.system ? `【联系人提示词】${char.system}` : "",
+    userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。"
+  ].filter(Boolean);
+
   if (worldEntries && worldEntries.length > 0) {
-    systemPrompt += "\n\n【当前命中设定背景背景注入】：";
-    worldEntries.forEach((entry) => {
-      systemPrompt += `\n- 《${entry.title}》: ${entry.content}`;
-    });
+    lines.push("【当前命中设定】");
+    worldEntries.forEach((entry) => lines.push(`- 《${entry.title}》：${entry.content}`));
   }
 
-  return [
-    { role: "system", content: systemPrompt },
-    { role: "system", content: "请使用简体中文。记住你是一个在手机端和用户交互的伴侣，语气极具个性，融入你的身份设定。不要自称AI，回复尽量精简、温馨、真切。" },
-    ...history
-  ];
+  if (options.test) {
+    lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
+  } else {
+    lines.push("【聊天方式】像真实联系人一样回复。默认一次回复 2 到 5 条短消息，每条消息单独一行；除非用户只需要极短确认，否则不要只回一整段。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【连续性】认真参考最近聊天，不要每轮都像第一次见面，也不要机械复述用户的话。语气、边界和情绪都要符合联系人提示词。");
+  }
+
+  return lines.join("\n");
+}
+
+function buildApiMessages(char, worldEntries, options = {}) {
+  const systemPrompt = buildSystemPrompt(char, worldEntries, options);
+  if (options.test) {
+    return [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: "测试一下接口是否能正常回复，请只说连接正常。" }
+    ];
+  }
+
+  const history = appState.messages[char.id]
+    .filter((m) => !m.loading && m.content)
+    .slice(-24)
+    .map((m) => ({ role: m.role, content: m.content }));
+
+  return [{ role: "system", content: systemPrompt }, ...history];
 }
 
 async function testConnection() {
@@ -713,7 +825,7 @@ async function testConnection() {
   elements.settingsNote.textContent = "正在测试连接...";
   try {
     const char = getActiveCharacter();
-    const reply = await callChatApi(char, [{ title: "测试", content: "这是一条测试" }]);
+    const reply = await callChatApiWithOptions(char, [], { test: true, config: apiConfig });
     elements.settingsNote.textContent = "测试成功：" + reply.slice(0, 80);
     updateConnectionLabel("测试成功");
   } catch (error) {
@@ -816,7 +928,7 @@ function openCharacterDrawer(char = null) {
   }
 
   if (char) {
-    document.getElementById("characterDrawerTitle").textContent = "编辑角色";
+    document.getElementById("characterDrawerTitle").textContent = "编辑联系人";
     elements.characterId.value = char.id;
     elements.characterName.value = char.name;
     elements.characterAvatar.value = char.avatar || char.name[0];
@@ -828,7 +940,7 @@ function openCharacterDrawer(char = null) {
     elements.characterSystem.value = char.system || "";
     elements.duplicateCharacterButton.style.display = "block";
   } else {
-    document.getElementById("characterDrawerTitle").textContent = "添加角色";
+    document.getElementById("characterDrawerTitle").textContent = "添加联系人";
     elements.characterId.value = "";
     elements.characterName.value = "";
     elements.characterAvatar.value = "";
@@ -861,6 +973,8 @@ function handleCharacterSubmit(event) {
   const intro = elements.characterIntro.value.trim();
   const greeting = elements.characterGreeting.value.trim();
   const system = elements.characterSystem.value.trim();
+  const existingChar = appState.characters.find(c => c.id === id);
+  const role = existingChar?.role || tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || title || "自定义角色";
 
   // 读取绑定的世界书选择项
   const checkedBoxes = document.querySelectorAll("input[name=\x22boundWorldBooks\x22]:checked");
@@ -869,7 +983,7 @@ function handleCharacterSubmit(event) {
   const newChar = {
     id: id, name: name, avatar: avatar, color: color,
     soft: convertHexToRgba(color, 0.3),
-    title: title, tags: tags, intro: intro, greeting: greeting, system: system,
+    role: role, title: title, tags: tags, intro: intro, greeting: greeting, system: system,
     boundWorldBookIds: boundWorldBookIds
   };
 
@@ -910,7 +1024,7 @@ function convertHexToRgba(hex, alpha) {
 }
 
 function renderCharacterList() {
-  elements.characterCount.textContent = appState.characters.length + " 个角色";
+  elements.characterCount.textContent = appState.characters.length + " 个联系人";
   elements.characterList.innerHTML = appState.characters.map((char) => {
     return "<div class=\"card character-card\" style=\"border-left: 4px solid " + char.color + "\">" +
       "<div class=\"avatar-mid\" style=\"background:" + char.color + "\">" + escapeHtml(char.avatar || char.name[0]) + "</div>" +
@@ -939,7 +1053,7 @@ function renderCharacterList() {
         alert("至少要保留一个伴侣角色哦。");
         return;
       }
-      if (confirm("确定要删除这个角色吗？聊天记录也会消失。")) {
+      if (confirm("确定要删除这个联系人吗？聊天记录也会消失。")) {
         appState.characters = appState.characters.filter(c => c.id !== id);
         delete appState.messages[id];
         if (appState.activeCharacterId === id) {
@@ -1126,13 +1240,14 @@ function resetToDefaults() {
 async function populateModelsDropdown() {
   const select = elements.model;
   select.innerHTML = "<option value=\x22fetching\x22>正在从上游 API 获取模型列表...</option>";
-  const platform = ApiHandler.inferPlatform(apiConfig);
+  const draftConfig = readConfigFromForm();
+  const platform = ApiHandler.inferPlatform(draftConfig);
   const fallbackModels = platform === "gemini" ? ApiHandler.geminiFallbackModels : ApiHandler.fallbackModels;
   let models = fallbackModels;
 
   try {
-    models = await ApiHandler.fetchModels(platform, apiConfig.endpoint, apiConfig.apiKey, {
-      corsProxyMode: apiConfig.corsProxyMode
+    models = await ApiHandler.fetchModels(platform, draftConfig.endpoint, draftConfig.apiKey, {
+      corsProxyMode: draftConfig.corsProxyMode
     });
     if (!models.length) throw new Error("列表为空");
   } catch (e) {
@@ -1147,7 +1262,7 @@ async function populateModelsDropdown() {
     elements.apiModelCustom.style.display = select.value === "custom" ? "block" : "none";
   };
 
-  const savedModel = apiConfig.model || defaultConfig.model;
+  const savedModel = draftConfig.model || apiConfig.model || defaultConfig.model;
   if ([...select.options].some((opt) => opt.value === savedModel)) {
     select.value = savedModel;
     elements.apiModelCustom.style.display = "none";
