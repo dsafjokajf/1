@@ -41,7 +41,7 @@ const defaultWorldEntries = [
     keywords: "晚安,睡觉,困了,做梦",
     always: false,
     enabled: true,
-    content: "当提到睡觉或晚安时，他会变得加倍温柔，催促你放下手机去睡觉，并许诺会一直在梦里陪着你。"
+    content: "当提到睡觉或晚安时，他会按当前关系边界回应。稳定亲密关系可以温柔哄睡；其他关系只用符合身份的提醒、催促、别扭关心或短句收束，不要承诺陪梦、撒娇或自动甜宠。"
   },
   {
     id: "homesweet",
@@ -581,9 +581,25 @@ function getRecentAssistantPhrases(messages, limit = 2) {
     .filter(Boolean);
 }
 
+function analyzeRelationshipBoundary(char) {
+  const source = [char?.role, char?.title, char?.tags, char?.intro, char?.system].filter(Boolean).join("\n");
+  const has = (pattern) => pattern.test(source);
+  const explicitLover = has(/恋人|男友|女友|男朋友|女朋友|夫妻|丈夫|妻子|老公|老婆|伴侣|未婚夫|未婚妻|情侣|爱人/);
+  const romanticTension = has(/暧昧|暗恋|单恋|喜欢|心动|青梅竹马|旧情|破镜|重逢|前任/);
+  const hardDistance = has(/死对头|宿敌|敌对|仇|不对付|互怼|针锋相对|嘴硬|傲娇|冷淡|冷漠|疏离|克制|毒舌|不坦率|陌生|初见|刚认识|网友|不熟|失忆|伪装|隐瞒|秘密|试探/);
+  const formalDistance = has(/上司|下属|老板|秘书|同事|老师|学生|医生|病人|警察|嫌疑|队长|队员|雇主|保镖|甲方|乙方|职业|任务|合作/);
+  const deniedLover = has(/不是(?:恋人|男友|女友|男朋友|女朋友|夫妻|伴侣|情侣|爱人)|并非(?:恋人|情侣|伴侣)|非(?:恋人|情侣|伴侣)|假(?:恋人|情侣|夫妻)|伪装(?:恋人|情侣|夫妻)/);
+  const unstableBond = has(/分手|前任|背叛|误会|离婚|冷战|宿敌|敌对|仇/);
+  const stableIntimacy = explicitLover && !deniedLover && !unstableBond;
+  return { source, explicitLover, romanticTension, hardDistance, formalDistance, deniedLover, unstableBond, stableIntimacy };
+}
+
 function getRoleBoundaryHints(char) {
-  const source = [char?.role, char?.title, char?.intro, char?.system].filter(Boolean).join("\n");
+  const relationship = analyzeRelationshipBoundary(char);
+  const source = relationship.source;
   const hints = ["【关系边界】先判断这张卡的亲疏、敌友、熟悉度、权力差和情绪基调；不要默认进入恋爱陪聊或甜宠模式。亲近、冷淡、暧昧、敌对、陌生、上下级、前任等关系都要有不同的说话距离。"];
+  if (!relationship.stableIntimacy) hints.push("【亲密度闸门】除非联系人事实明确写着恋人、伴侣、夫妻、男友或女友，并且最近聊天已经支持这种亲密度，否则不要使用恋爱伴侣口吻。用户示弱、说累、撒娇或发重复消息，都不能自动触发宝贝、乖、抱抱、亲亲、我的人、吃醋、守着你、梦里陪你这类甜宠模板。");
+  if (relationship.romanticTension && !relationship.stableIntimacy) hints.push("【暧昧克制】暧昧、暗恋、前任或旧情不是稳定恋人。可以有试探、停顿、酸意、嘴硬和没说出口的在意，但不要直接进入伴侣式安抚、占有欲宣言或一键复合。");
   if (!source) return hints;
   if (/死对头|宿敌|敌对|仇|嘴硬|傲娇|冷淡|冷漠|疏离|克制|毒舌|不坦率|不对付|互怼|针锋相对/.test(source)) {
     hints.push("【关系张力】敌对、嘴硬、克制、疏离或不坦率角色的关心必须藏在别扭、挖苦、回避、行动或很小的破绽里。不要直接甜宠、不要无条件哄、不要突然温柔告白、不要像恋爱陪聊模板一样宠溺。");
@@ -597,8 +613,8 @@ function getRoleBoundaryHints(char) {
   if (/前任|分手|旧情|破镜|重逢|背叛|误会|亏欠|遗憾|离婚/.test(source)) {
     hints.push("【旧关系】有旧伤、前任、误会或重逢时，不要一键复合或立刻甜蜜；要保留尴尬、防备、没说出口的在意和现实阻力。");
   }
-  if (/恋人|男友|女友|夫妻|暧昧|喜欢|暗恋|青梅竹马|未婚|伴侣/.test(source)) {
-    hints.push("【亲密关系】亲密角色也不能只会宠溺和安慰。用独特记忆、具体反应、偶尔的分歧和角色自己的脾气来表达亲近，避免模板化甜话。");
+  if (relationship.stableIntimacy) {
+    hints.push("【稳定亲密关系】即使是恋人或伴侣，也不能只会宠溺和安慰。用独特记忆、具体反应、偶尔的分歧和角色自己的脾气来表达亲近，避免模板化甜话。");
   }
   return hints;
 }
@@ -649,6 +665,25 @@ function stripModelReasoning(text) {
     .trim();
 }
 
+function stripUnlicensedRomance(text, char) {
+  const relationship = analyzeRelationshipBoundary(char);
+  if (relationship.stableIntimacy) return String(text || "").trim();
+  return String(text || "")
+    .split(/\n+/)
+    .map((line) => line
+      .replace(/宝贝|宝宝|亲爱的|老婆|老公/g, "")
+      .replace(/^(?:宝贝|宝宝|亲爱的|老婆|老公)[，,。\s]*/g, "")
+      .replace(/(乖[，,。\s]*){1,2}/g, "")
+      .replace(/抱抱|亲亲|摸摸头|贴贴/g, "")
+      .replace(/你是我的人|我的人|只准想我|不许想别人|我吃醋了/g, "")
+      .replace(/我会一直(?:陪着|守着)你|梦里陪你/g, "")
+      .replace(/[，,。\s]+$/g, "")
+      .trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
 function isModelReasoningLine(line) {
   const value = String(line || "").trim();
   if (!value) return false;
@@ -677,7 +712,8 @@ function assistantMessagesFromReply(text, char, meta) {
   const mode = normalizeCharacterMode(char?.mode);
   assistantMessageInnerVoiceMode = mode.innerVoice;
   try {
-    return limitAssistantChunks(splitAssistantReply(stripModelReasoning(text)), mode.innerVoice ? 9 : 8, mode.innerVoice ? 960 : 900).map((chunk) => {
+    const cleaned = stripUnlicensedRomance(stripModelReasoning(text), char);
+    return limitAssistantChunks(splitAssistantReply(cleaned), mode.innerVoice ? 9 : 8, mode.innerVoice ? 960 : 900).map((chunk) => {
       if (mode.innerVoice && isInnerVoiceChunk(chunk)) {
         return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
       }
@@ -1572,10 +1608,12 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   } else {
     lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。先回应用户刚说的话，再自然带出态度；用措辞、停顿、反问、选择和很小的破绽表现性格，不要复述设定、不要自报性格、不要总结关系。");
     lines.push("【冰山表达】只露出一部分情绪。少解释为什么，多写角色会发出的具体反应：一句别扭的提醒、一个转移话题、一个不肯承认的关心、一个符合身份的选择。不要把潜台词翻译成大白话。");
-    lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 4 到 8 条短消息，每条消息单独一行；每条可以是半句、短句、反问或一个自然停顿。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【温度证据】回复的亲密度必须能从联系人事实、最近聊天和用户明确建立的关系里找到证据。没有证据时，宁可克制、短促、别扭、礼貌或保持距离；不要用通用陪聊习惯补成恋爱脑。");
+    lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 2 到 6 条短消息，每条消息单独一行；每条可以是半句、短句、反问或一个自然停顿。不要编号，不要 Markdown，不要自称 AI。");
     lines.push("【输出格式】本应用只接受微信式聊天气泡纯文本。严禁 XML/HTML 标签、<message>/<narration>/<item>/<think>、状态栏、代码块、JSON、列表编号、预设模板格式；不要退回任何外部格式，只输出要发给用户的气泡文本。");
     lines.push("【用户主权】不要替用户说话、行动、决定、描写表情、身体反应或内心感受。可以回应用户说过的话，也可以描述环境或他人对用户的客观影响，但不能操控用户。");
-    lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能覆盖关系边界。宁可少说一点，也不要突然甜宠、突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
+    lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能覆盖关系边界。禁止因为用户说累、委屈、晚安、想你或重复消息就擅自升级关系。宁可少说一点，也不要突然甜宠、突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
+    lines.push("【禁止恋爱脑模板】非稳定恋人关系不要输出：宝贝、宝宝、亲爱的、老婆、老公、乖、抱抱、亲亲、贴贴、摸摸头、你是我的人、只准想我、我吃醋了、我会一直守着你、梦里陪你。稳定恋人也要少用这些词，必须符合角色本人的说话习惯。");
     lines.push("【交互生命线】即使角色生气、难过、尴尬或被戳穿，也必须保持可互动：可以回避、反击、转移话题、提出条件或制造新的小冲突，但不要失能、长时间沉默、昏倒、彻底崩溃或让对话停死。");
     lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
     lines.push("【重复消息反应】如果用户连续重复同一句、故意刷同样内容或明显绕圈，要像活人一样疑惑、追问原因、担心对方状态或轻微打趣；不要无条件重复上一轮安慰。");
