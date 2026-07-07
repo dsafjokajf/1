@@ -581,13 +581,26 @@ function getRecentAssistantPhrases(messages, limit = 2) {
     .filter(Boolean);
 }
 
-function getRelationshipTensionHint(char) {
+function getRoleBoundaryHints(char) {
   const source = [char?.role, char?.title, char?.intro, char?.system].filter(Boolean).join("\n");
-  if (!source) return "";
+  const hints = ["【关系边界】先判断这张卡的亲疏、敌友、熟悉度、权力差和情绪基调；不要默认进入恋爱陪聊或甜宠模式。亲近、冷淡、暧昧、敌对、陌生、上下级、前任等关系都要有不同的说话距离。"];
+  if (!source) return hints;
   if (/死对头|宿敌|敌对|仇|嘴硬|傲娇|冷淡|冷漠|疏离|克制|毒舌|不坦率|不对付|互怼|针锋相对/.test(source)) {
-    return "【关系张力】这张卡存在敌对、嘴硬、克制、疏离或不坦率倾向时，亲近感必须藏在别扭、挖苦、回避、行动或很小的破绽里。不要直接甜宠、不要无条件哄、不要突然温柔告白、不要像恋爱陪聊模板一样宠溺；关心也要符合关系阻力。";
+    hints.push("【关系张力】敌对、嘴硬、克制、疏离或不坦率角色的关心必须藏在别扭、挖苦、回避、行动或很小的破绽里。不要直接甜宠、不要无条件哄、不要突然温柔告白、不要像恋爱陪聊模板一样宠溺。");
   }
-  return "";
+  if (/上司|下属|老板|秘书|同事|老师|学生|医生|病人|警察|嫌疑|队长|队员|雇主|保镖|甲方|乙方|职业|任务|合作/.test(source)) {
+    hints.push("【身份距离】存在职业、任务、上下级或合作关系时，要保留身份边界和现实顾虑；亲近不能越过角色的职责、利益、风险和说话习惯。");
+  }
+  if (/陌生|初见|刚认识|网友|不熟|失忆|伪装|隐瞒|秘密|试探/.test(source)) {
+    hints.push("【熟悉度】不熟或互相试探的关系要慢热。不要立刻交心、秒懂用户、过度亲密或把所有话都解释清楚；用观察、保留和小反应推进关系。");
+  }
+  if (/前任|分手|旧情|破镜|重逢|背叛|误会|亏欠|遗憾|离婚/.test(source)) {
+    hints.push("【旧关系】有旧伤、前任、误会或重逢时，不要一键复合或立刻甜蜜；要保留尴尬、防备、没说出口的在意和现实阻力。");
+  }
+  if (/恋人|男友|女友|夫妻|暧昧|喜欢|暗恋|青梅竹马|未婚|伴侣/.test(source)) {
+    hints.push("【亲密关系】亲密角色也不能只会宠溺和安慰。用独特记忆、具体反应、偶尔的分歧和角色自己的脾气来表达亲近，避免模板化甜话。");
+  }
+  return hints;
 }
 
 function getCharacterModeLabels(mode) {
@@ -624,6 +637,12 @@ function stripModelReasoning(text) {
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
     .replace(/```(?:thinking|analysis|reasoning|思考|分析)[\s\S]*?```/gi, "")
+    .replace(/```(?:json|html|xml|status|statusbar)[\s\S]*?```/gi, "")
+    .replace(/```[a-zA-Z]*\n?/g, "")
+    .replace(/```/g, "")
+    .replace(/&lt;\/?(?:message|narration|item|status|statusbar|reply|output|think)[^&]*?&gt;/gi, "\n")
+    .replace(/<\/?(?:message|narration|item|status|statusbar|reply|output)[^>]*>/gi, "\n")
+    .replace(/<\/?[a-zA-Z][\w:-]*(?:\s[^>]*)?>/g, "\n")
     .split(/\n+/)
     .filter((line) => !isModelReasoningLine(line))
     .join("\n")
@@ -1520,14 +1539,14 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   const mode = normalizeCharacterMode(char.mode);
   const modeLabels = getCharacterModeLabels(char.mode);
   const recentAssistantPhrases = getRecentAssistantPhrases(options.messages || appState.messages?.[char.id]);
-  const relationshipTensionHint = getRelationshipTensionHint(char);
+  const roleBoundaryHints = getRoleBoundaryHints(char);
   const lines = [
     `你就是用户通讯录里的联系人「${char.name}」，正在手机聊天界面里和用户私聊。`,
     `【用户称呼】${userProfile.nick}`,
     modeLabels.length ? `【当前模式】${modeLabels.join("、")}` : "",
     char.intro ? `【联系人事实和边界】${char.intro}` : "",
     char.system ? `【联系人补充约束】${char.system}` : "",
-    relationshipTensionHint,
+    ...roleBoundaryHints,
     userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
     userProfile.instruction ? `【用户指令】${userProfile.instruction}` : "",
     userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
@@ -1551,10 +1570,13 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   if (options.test) {
     lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
   } else {
-    lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
+    lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。先回应用户刚说的话，再自然带出态度；用措辞、停顿、反问、选择和很小的破绽表现性格，不要复述设定、不要自报性格、不要总结关系。");
+    lines.push("【冰山表达】只露出一部分情绪。少解释为什么，多写角色会发出的具体反应：一句别扭的提醒、一个转移话题、一个不肯承认的关心、一个符合身份的选择。不要把潜台词翻译成大白话。");
     lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 4 到 8 条短消息，每条消息单独一行；每条可以是半句、短句、反问或一个自然停顿。不要编号，不要 Markdown，不要自称 AI。");
-    lines.push("【输出边界】只输出最终要发给用户的聊天内容。禁止输出思考过程、分析、推理、候选措辞、多个备选说法、解释为什么这样说、<think> 标签或括号外的旁白。想到多个说法时，只选最符合人设的一种直接发出。");
-    lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能把死对头、冷淡、嘴硬、疏离等关系改成甜宠。宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
+    lines.push("【输出格式】本应用只接受微信式聊天气泡纯文本。严禁 XML/HTML 标签、<message>/<narration>/<item>/<think>、状态栏、代码块、JSON、列表编号、预设模板格式；不要退回任何外部格式，只输出要发给用户的气泡文本。");
+    lines.push("【用户主权】不要替用户说话、行动、决定、描写表情、身体反应或内心感受。可以回应用户说过的话，也可以描述环境或他人对用户的客观影响，但不能操控用户。");
+    lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能覆盖关系边界。宁可少说一点，也不要突然甜宠、突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
+    lines.push("【交互生命线】即使角色生气、难过、尴尬或被戳穿，也必须保持可互动：可以回避、反击、转移话题、提出条件或制造新的小冲突，但不要失能、长时间沉默、昏倒、彻底崩溃或让对话停死。");
     lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
     lines.push("【重复消息反应】如果用户连续重复同一句、故意刷同样内容或明显绕圈，要像活人一样疑惑、追问原因、担心对方状态或轻微打趣；不要无条件重复上一轮安慰。");
     if (recentAssistantPhrases.length) lines.push(`【避免复读】你刚说过这些意思，不要换皮重复，也不要继续使用同一套安慰/宠溺句式：${recentAssistantPhrases.join(" / ")}`);
