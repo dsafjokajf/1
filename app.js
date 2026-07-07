@@ -319,6 +319,7 @@ const ApiHandler = {
 };
 
 
+let assistantMessageInnerVoiceMode = false;
 let appState = loadSessionState();
 let apiConfig = loadConfig();
 let isSending = false;
@@ -512,7 +513,7 @@ function normalizeCharacterData(char) {
 }
 
 function normalizeMessageData(message) {
-  const type = ["text", "transfer", "system"].includes(message?.type) ? message.type : "text";
+  const type = ["text", "transfer", "system", "innerVoice"].includes(message?.type) ? message.type : "text";
   const quote = message?.quote && typeof message.quote === "object"
     ? { author: String(message.quote.author || ""), text: String(message.quote.text || "").slice(0, 180) }
     : null;
@@ -536,6 +537,40 @@ function getCharacterModeLabels(mode) {
   if (normalized.innerVoice) labels.push("心声");
   if (normalized.distance) labels.push("异地");
   return labels;
+}
+
+function getPersonaPreview(text, maxLength = 56) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) + "..." : normalized;
+}
+
+function isInnerVoiceChunk(text) {
+  const value = String(text || "").trim();
+  return /^[（(〈《][\s\S]{2,}[）)〉》]$/.test(value);
+}
+
+function normalizeInnerVoiceText(text) {
+  const value = String(text || "").trim();
+  if (/^[〈《]/.test(value) && /[〉》]$/.test(value)) return "（" + value.slice(1, -1).trim() + "）";
+  if (/^\(.+\)$/.test(value)) return "（" + value.slice(1, -1).trim() + "）";
+  if (/^（[\s\S]+）$/.test(value)) return value;
+  return "（" + value.replace(/^[（(〈《]|[）)〉》]$/g, "").trim() + "）";
+}
+
+function assistantMessagesFromReply(text, char, meta) {
+  const mode = normalizeCharacterMode(char?.mode);
+  assistantMessageInnerVoiceMode = mode.innerVoice;
+  try {
+    return splitAssistantReply(text).map((chunk) => {
+      if (mode.innerVoice && isInnerVoiceChunk(chunk)) {
+        return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
+      }
+      return assistantMessage(chunk, meta);
+    });
+  } finally {
+    assistantMessageInnerVoiceMode = false;
+  }
 }
 
 function setCharacterModeForm(mode) {
@@ -806,6 +841,7 @@ function renderActivePersonaCard() {
   
   const tagsHtml = (char.tags || "").split(/[,，]/).filter(t => t.trim()).map(t => `<span class="tag-label">${escapeHtml(t.trim())}</span>`).join("");
   const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || "自定义角色";
+  const personaPreview = getPersonaPreview(char.title || char.intro || "", 44);
   
   elements.activePersona.innerHTML = `
     <button class="avatar-big" data-active-avatar-nudge="1" type="button" style="background:${char.color}" title="拍一拍" aria-label="拍一拍${escapeHtml(char.name)}">
@@ -813,7 +849,7 @@ function renderActivePersonaCard() {
     </button>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
-      <p class="role-desc">${escapeHtml(roleText)} · ${escapeHtml(char.title || char.intro || "")}</p>
+      <p class="role-desc">${escapeHtml(roleText)}${personaPreview ? " · " + escapeHtml(personaPreview) : ""}</p>
       <div class="tags-row">${tagsHtml}</div>
     </div>
     <button class="icon-button" id="editActivePersonaButton" type="button" title="编辑设定">
@@ -839,6 +875,15 @@ function renderMessage(m, char) {
   const isAssistant = m.role === "assistant";
   if (m.type === "system") {
     return `<article class="message-notice" data-message-id="${escapeHtml(String(m.time))}">${formatRichText(m.content)}</article>`;
+  }
+  if (m.type === "innerVoice") {
+    return `
+    <article class="message assistant inner-voice" data-message-id="${escapeHtml(String(m.time))}">
+      <span class="inner-voice-spacer" aria-hidden="true"></span>
+      <div class="inner-voice-line">${formatRichText(normalizeInnerVoiceText(m.content))}</div>
+      <span class="message-meta">${escapeHtml(m.meta || "心声")}</span>
+    </article>
+  `;
   }
   const quote = m.quote ? `<div class="quoted-line"><strong>${escapeHtml(m.quote.author || "引用")}</strong><span>${escapeHtml(m.quote.text || "")}</span></div>` : "";
   const avatar = isAssistant ? `<button class="bubble-avatar" data-avatar-nudge="1" type="button" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</button>` : "";
@@ -871,7 +916,7 @@ function bindRenderedMessageActions(container, char, messages) {
     let timer = null;
     const open = (event) => {
       const message = messages.find((item) => String(item.time) === node.dataset.messageId);
-      if (message && !message.loading) showMessageMenu(event, message, char);
+      if (message && !message.loading && message.type !== "innerVoice") showMessageMenu(event, message, char);
     };
     node.addEventListener("contextmenu", (event) => { event.preventDefault(); open(event); });
     node.addEventListener("pointerdown", (event) => {
@@ -1139,6 +1184,23 @@ function splitAssistantReply(text) {
   if (!cleaned) return [];
 
   const normalizePart = (part) => part.replace(/^[-*•\d.、)）\s]+/, "").trim();
+  const innerVoiceSegmentPattern = /([（(〈《][^\n（()）)〈〉《》]{2,120}[）)〉》])/g;
+  const innerVoiceSegments = [];
+  const protectInnerVoiceSegments = (value) => {
+    return String(value || "").replace(innerVoiceSegmentPattern, (match) => {
+      const index = innerVoiceSegments.push(match) - 1;
+      return `\u0001INNER_${index}\u0001`;
+    });
+  };
+  const restoreInnerVoiceSegments = (value) => String(value || "").replace(/\u0001INNER_(\d+)\u0001/g, (_, index) => innerVoiceSegments[Number(index)] || "");
+  const expandInnerVoiceParts = (parts) => {
+    if (!assistantMessageInnerVoiceMode) return parts.map(restoreInnerVoiceSegments);
+    const expanded = [];
+    parts.forEach((part) => {
+      String(restoreInnerVoiceSegments(part) || "").split(innerVoiceSegmentPattern).map(normalizePart).filter(Boolean).forEach((piece) => expanded.push(piece));
+    });
+    return expanded;
+  };
   const splitAfter = (value, punctuationPattern) => {
     const out = [];
     let buf = "";
@@ -1152,14 +1214,15 @@ function splitAssistantReply(text) {
     if (buf.trim()) out.push(buf);
     return out.map(normalizePart).filter(Boolean);
   };
-  const fromLines = cleaned.split(/\n+/).map(normalizePart).filter(Boolean);
-  if (fromLines.length >= 2) return fromLines.slice(0, 6);
+  const protectedCleaned = protectInnerVoiceSegments(cleaned);
+  const fromLines = protectedCleaned.split(/\n+/).map(normalizePart).filter(Boolean);
+  if (fromLines.length >= 2) return expandInnerVoiceParts(fromLines).slice(0, 8);
 
-  let parts = splitAfter(cleaned, /[。！？!?]/);
+  let parts = splitAfter(protectedCleaned, /[。！？!?]/);
   if (parts.length < 2 && cleaned.length > 28) {
-    parts = splitAfter(cleaned, /[，,；;]/);
+    parts = splitAfter(protectedCleaned, /[，,；;]/);
   }
-  return (parts.length >= 2 ? parts : [cleaned]).slice(0, 6);
+  return expandInnerVoiceParts(parts.length >= 2 ? parts : [cleaned]).slice(0, 8);
 }
 
 function sleep(ms) {
@@ -1252,15 +1315,15 @@ async function replyToUser(char, content) {
     const hasKey = Boolean(apiConfig.apiKey);
     const useApi = hasKey;
     const reply = useApi ? await callChatApi(char, worldEntries) : localReply(char);
-    const chunks = useApi ? splitAssistantReply(reply) : [reply];
-    if (chunks.length === 0) throw new Error("接口返回内容为空");
+    const messages = useApi ? assistantMessagesFromReply(reply, char, "API") : [assistantMessage(reply, "本地陪伴")];
+    if (messages.length === 0) throw new Error("接口返回内容为空");
 
-    replaceLoadingMessage(char.id, assistantMessage(chunks[0], useApi ? "API" : "本地陪伴"));
+    replaceLoadingMessage(char.id, messages[0]);
     saveState();
     renderMessages();
-    for (const chunk of chunks.slice(1)) {
-      await sleep(Math.min(1800, 320 + chunk.length * 45));
-      appState.messages[char.id].push(assistantMessage(chunk, useApi ? "API" : "本地陪伴"));
+    for (const message of messages.slice(1)) {
+      await sleep(Math.min(1800, 320 + message.content.length * 45));
+      appState.messages[char.id].push(message);
       saveState();
       renderMessages();
     }
@@ -1350,6 +1413,7 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   const userProfile = getUserProfile(options.config || apiConfig);
   const userPersona = (options.config?.userPersona || userProfile.persona || apiConfig.userPersona || "").trim();
   const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || char.title || "自定义联系人";
+  const mode = normalizeCharacterMode(char.mode);
   const modeLabels = getCharacterModeLabels(char.mode);
   const lines = [
     `你正在扮演通讯录里的联系人「${char.name}」，和用户在手机聊天界面里私聊。`,
@@ -1358,12 +1422,22 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     modeLabels.length ? `【当前模式】${modeLabels.join("、")}` : "",
     char.title ? `【联系人标题】${char.title}` : "",
     char.tags ? `【联系人标签】${char.tags}` : "",
-    char.intro ? `【联系人简介】${char.intro}` : "",
+    char.intro ? `【联系人人设信息】${char.intro}` : "",
     char.system ? `【联系人提示词】${char.system}` : "",
     userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
     userProfile.instruction ? `【用户指令】${userProfile.instruction}` : "",
     userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
   ].filter(Boolean);
+
+  if (mode.offline) {
+    lines.push("【线下模式】当前更像面对面相处，不是单纯隔着屏幕聊天。可以自然写动作、神态、环境和距离感，但仍要像真实联系人一样分成短消息，不要把线下模式改写进人设。");
+  }
+  if (mode.distance) {
+    lines.push("【异地模式】关系里存在距离或时差。回复时可以自然体现惦记、等待、错过和想见面，但不要每次机械强调异地。");
+  }
+  if (mode.innerVoice) {
+    lines.push("【心声模式】不要改变、扩写或覆盖联系人人设。每次回复在正常聊天内容之外，额外单独输出一行角色没说出口的心声；心声必须用中文括号包裹，例如：（其实我刚才有点松了一口气。）这一行只写内心想法，不写成台词，不要用尖括号，不要和普通回复放在同一行。");
+  }
 
   if (worldEntries && worldEntries.length > 0) {
     lines.push("【当前命中设定】");
@@ -1392,7 +1466,7 @@ function buildApiMessages(char, worldEntries, options = {}) {
   const history = appState.messages[char.id]
     .filter((m) => !m.loading && m.content)
     .slice(-24)
-    .map((m) => ({ role: m.role, content: m.content }));
+    .map((m) => ({ role: m.role, content: m.type === "innerVoice" ? `【心声】${normalizeInnerVoiceText(m.content)}` : m.content }));
 
   return [{ role: "system", content: systemPrompt }, ...history];
 }
@@ -1442,8 +1516,10 @@ function replaceLoadingMessage(charId, replacement) {
   else list.push(replacement);
 }
 
-function assistantMessage(content, meta) {
-  return { role: "assistant", type: "text", content, meta, time: Date.now() };
+function assistantMessage(content, meta, type = "text") {
+  const resolvedType = type === "text" && meta === "API" && assistantMessageInnerVoiceMode && isInnerVoiceChunk(content) ? "innerVoice" : type;
+  const resolvedContent = resolvedType === "innerVoice" ? normalizeInnerVoiceText(content) : content;
+  return { role: "assistant", type: resolvedType, content: resolvedContent, meta, time: Date.now() };
 }
 
 function userMessage(content, quote = null) {
@@ -1555,7 +1631,7 @@ function handleCharacterSubmit(event) {
   const system = elements.characterSystem.value.trim();
   const existingChar = appState.characters.find(c => c.id === id);
   const mode = readCharacterModeForm();
-  const role = tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || intro || existingChar?.role || "自定义联系人";
+  const role = tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || existingChar?.role || "自定义联系人";
 
   // 读取绑定的世界书选择项
   const checkedBoxes = document.querySelectorAll("input[name=\x22boundWorldBooks\x22]:checked");
@@ -1607,11 +1683,12 @@ function convertHexToRgba(hex, alpha) {
 function renderCharacterList() {
   elements.characterCount.textContent = appState.characters.length + " 个联系人";
   elements.characterList.innerHTML = appState.characters.map((char) => {
+    const preview = getPersonaPreview(char.intro || char.greeting || "", 72);
     return "<div class=\"card character-card\" style=\"border-left: 4px solid " + char.color + "\">" +
       "<div class=\"avatar-mid\" style=\"background:" + char.color + "\">" + escapeHtml(char.avatar || char.name[0]) + "</div>" +
       "<div class=\"card-info\">" +
         "<h3>" + escapeHtml(char.name) + "</h3>" +
-        "<p class=\"card-intro\">" + escapeHtml(char.intro) + "</p>" +
+        "<p class=\"card-intro\">" + escapeHtml(preview) + "</p>" +
       "</div>" +
       "<div class=\"card-actions\">" +
         "<button class=\"ghost-button compact edit-btn\" data-id=\"" + char.id + "\">编辑</button>" +

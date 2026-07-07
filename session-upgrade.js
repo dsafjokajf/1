@@ -467,6 +467,7 @@ async function sessionReplyToUser(char, content) {
   session.updatedAt = Date.now();
   sessionRenderMessages();
   const worldEntries = triggerWorldBook(content, char.id);
+  assistantMessageInnerVoiceMode = normalizeCharacterMode(char.mode).innerVoice;
   try {
     const useApi = Boolean(apiConfig.apiKey);
     const reply = useApi ? await callChatApi(char, worldEntries) : sessionLocalReply(char);
@@ -487,6 +488,7 @@ async function sessionReplyToUser(char, content) {
     sessionReplaceLoadingMessage(char.id, assistantMessage(apiFailureReply(error), "连接提示"));
     updateConnectionLabel("连接失败");
   } finally {
+    assistantMessageInnerVoiceMode = false;
     isSending = false;
     elements.sendButton.disabled = false;
     sessionSaveState();
@@ -659,10 +661,11 @@ function sessionRenderCharacterList() {
   elements.characterList.innerHTML = filtered.map((char) => {
     const tags = (char.tags || "").split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 4).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
     const archiveCount = appState.archives.filter((archive) => archive.characterId === char.id).length;
+    const preview = getPersonaPreview(char.intro || char.greeting || "", 72);
     return `
       <article class="item-card contact-card" style="--card-color:${escapeHtml(char.color)}">
         <div class="item-top"><div class="avatar" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</div><div class="item-title"><strong>${escapeHtml(char.name)}</strong><span>${escapeHtml(char.title || char.role || "聊天联系人")}</span></div><span class="scope-tag">${archiveCount} 存档</span></div>
-        <p>${escapeHtml(char.intro || char.greeting || "")}</p><div class="tag-row">${tags}</div>
+        <p>${escapeHtml(preview)}</p><div class="tag-row">${tags}</div>
         <div class="item-actions"><button class="small-button chat-btn" type="button" data-id="${escapeHtml(char.id)}">聊天</button><button class="small-button edit-btn" type="button" data-id="${escapeHtml(char.id)}">编辑</button><button class="small-button is-danger delete-btn" type="button" data-id="${escapeHtml(char.id)}">删除</button></div>
       </article>
     `;
@@ -703,7 +706,7 @@ function sessionHandleCharacterSubmit(event) {
     color,
     avatar: elements.characterAvatar.value.trim() || name[0] || "TA",
     soft: convertHexToRgba(color, 0.3),
-    role: tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || elements.characterIntro.value.trim() || existingChar?.role || "自定义联系人",
+    role: tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || existingChar?.role || "自定义联系人",
     title: elements.characterIntro.value.trim(),
     tags,
     intro: elements.characterIntro.value.trim(),
