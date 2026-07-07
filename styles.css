@@ -902,6 +902,10 @@ select:focus-visible {
   overflow: hidden;
 }
 
+#view-characters {
+  grid-template-rows: auto auto min-content 1fr;
+}
+
 .settings-view {
   grid-template-rows: auto auto auto 1fr;
   overflow-y: auto;

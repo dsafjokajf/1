@@ -514,14 +514,14 @@ async function sessionReplyToUser(char, content) {
   try {
     const useApi = Boolean(apiConfig.apiKey);
     const reply = useApi ? await callChatApi(char, worldEntries) : sessionLocalReply(char);
-    const chunks = useApi ? splitAssistantReply(reply) : [reply];
-    if (!chunks.length) throw new Error("接口返回内容为空");
-    sessionReplaceLoadingMessage(char.id, assistantMessage(chunks[0], useApi ? "API" : "本地陪伴"));
+    const messages = useApi ? assistantMessagesFromReply(reply, char, "API") : [assistantMessage(reply, "本地陪伴")];
+    if (!messages.length) throw new Error("接口返回内容为空");
+    sessionReplaceLoadingMessage(char.id, messages[0]);
     sessionSaveState();
     sessionRenderMessages();
-    for (const chunk of chunks.slice(1)) {
-      await sleep(Math.min(1800, 320 + chunk.length * 45));
-      sessionGetCurrentSession(char.id).messages.push(assistantMessage(chunk, useApi ? "API" : "本地陪伴"));
+    for (const message of messages.slice(1)) {
+      await sleep(Math.min(1800, 320 + message.content.length * 45));
+      sessionGetCurrentSession(char.id).messages.push(message);
       sessionGetCurrentSession(char.id).updatedAt = Date.now();
       sessionSaveState();
       sessionRenderMessages();

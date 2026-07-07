@@ -602,11 +602,46 @@ function normalizeInnerVoiceText(text) {
   return "（" + value.replace(/^[（(〈《]|[）)〉》]$/g, "").trim() + "）";
 }
 
+function stripModelReasoning(text) {
+  return String(text || "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/```(?:thinking|analysis|reasoning|思考|分析)[\s\S]*?```/gi, "")
+    .split(/\n+/)
+    .filter((line) => !isModelReasoningLine(line))
+    .join("\n")
+    .trim();
+}
+
+function isModelReasoningLine(line) {
+  const value = String(line || "").trim();
+  if (!value) return false;
+  if (/^(?:思考|分析|推理|推导|候选|方案|草稿|chain\s*of\s*thought|reasoning|analysis)\s*[:：]/i.test(value)) return true;
+  if (/^(?:或者|还是|不过|那得|得用|啊[，,]?还是)/.test(value) && /[“"][^”"]+[”"]/.test(value) && /(词|说法|称呼|身份|正式|不对|比如|用|生硬|可能|根本|符合|太)/.test(value)) return true;
+  if (/^(?:或者|还是|不过|那得|得用).{0,12}(?:用|说|叫).{0,50}(?:这个词|这种词|说法|称呼|身份|符合|正式|不对)/.test(value)) return true;
+  return false;
+}
+
+function limitAssistantChunks(chunks, maxChunks = 4, maxChars = 520) {
+  const limited = [];
+  let used = 0;
+  for (const chunk of chunks.map((item) => String(item || "").trim()).filter(Boolean)) {
+    if (limited.length >= maxChunks || used >= maxChars) break;
+    const room = maxChars - used;
+    const next = chunk.length > room ? chunk.slice(0, Math.max(0, room - 1)).trim() + "..." : chunk;
+    if (next) {
+      limited.push(next);
+      used += next.length;
+    }
+  }
+  return limited;
+}
+
 function assistantMessagesFromReply(text, char, meta) {
   const mode = normalizeCharacterMode(char?.mode);
   assistantMessageInnerVoiceMode = mode.innerVoice;
   try {
-    return splitAssistantReply(text).map((chunk) => {
+    return limitAssistantChunks(splitAssistantReply(stripModelReasoning(text)), mode.innerVoice ? 4 : 3, mode.innerVoice ? 560 : 420).map((chunk) => {
       if (mode.innerVoice && isInnerVoiceChunk(chunk)) {
         return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
       }
@@ -1229,7 +1264,7 @@ function formatMomentTime(timestamp) {
 }
 
 function splitAssistantReply(text) {
-  const cleaned = String(text || "")
+  const cleaned = stripModelReasoning(text)
     .replace(/\r/g, "\n")
     .replace(/^(?:AI|assistant|回复)[:：]\s*/i, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -1479,7 +1514,8 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
   } else {
     lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
-    lines.push("【聊天方式】像真实联系人正在回消息。你可以按当下情绪和人设自然决定回复一条或多条；想分成多条气泡时，每条消息单独一行。允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【聊天方式】像真实联系人正在回消息。你可以按当下情绪和人设自然决定回复一到三条；想分成多条气泡时，每条消息单独一行。允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【输出边界】只输出最终要发给用户的聊天内容。禁止输出思考过程、分析、推理、候选措辞、多个备选说法、解释为什么这样说、<think> 标签或括号外的旁白。想到多个说法时，只选最符合人设的一种直接发出。");
     lines.push("【防 OOC】如果人设和用户当前语境冲突，以人设事实、关系边界和最近聊天记录为准；宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
     lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
     lines.push("【重复消息反应】如果用户连续重复同一句、故意刷同样内容或明显绕圈，要像活人一样疑惑、追问原因、担心对方状态或轻微打趣；不要无条件重复上一轮安慰。");
