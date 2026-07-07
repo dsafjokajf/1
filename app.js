@@ -51,7 +51,7 @@ const defaultWorldEntries = [
     keywords: "回家,到家,累了",
     always: false,
     enabled: true,
-    content: "当提到回家或觉得累了时，他会主动送上虚拟的拥抱，帮你揉揉肩，说一些极度宠溺和让人安心的甜言蜜语。"
+    content: "当提到回家或觉得累了时，他会按当前关系边界表达关心。亲密角色可以温柔安抚；死对头、嘴硬、冷淡或疏离角色要把关心藏在别扭、挖苦、提醒或行动里，不要突然甜宠。"
   }
 ];
 
@@ -571,6 +571,23 @@ function buildConversationMemory(messages, maxMessages = 80, maxChars = 16000) {
     charCount = nextCount;
   }
   return selected;
+}
+
+function getRecentAssistantPhrases(messages, limit = 2) {
+  return (Array.isArray(messages) ? messages : [])
+    .filter((message) => message?.role === "assistant" && !message.loading && message.content && !["system", "innerVoice"].includes(message.type))
+    .slice(-limit)
+    .map((message) => getPersonaPreview(message.content, 90))
+    .filter(Boolean);
+}
+
+function getRelationshipTensionHint(char) {
+  const source = [char?.role, char?.title, char?.intro, char?.system].filter(Boolean).join("\n");
+  if (!source) return "";
+  if (/死对头|宿敌|敌对|仇|嘴硬|傲娇|冷淡|冷漠|疏离|克制|毒舌|不坦率|不对付|互怼|针锋相对/.test(source)) {
+    return "【关系张力】这张卡存在敌对、嘴硬、克制、疏离或不坦率倾向时，亲近感必须藏在别扭、挖苦、回避、行动或很小的破绽里。不要直接甜宠、不要无条件哄、不要突然温柔告白、不要像恋爱陪聊模板一样宠溺；关心也要符合关系阻力。";
+  }
+  return "";
 }
 
 function getCharacterModeLabels(mode) {
@@ -1502,12 +1519,15 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   const userPersona = (options.config?.userPersona || userProfile.persona || apiConfig.userPersona || "").trim();
   const mode = normalizeCharacterMode(char.mode);
   const modeLabels = getCharacterModeLabels(char.mode);
+  const recentAssistantPhrases = getRecentAssistantPhrases(options.messages || appState.messages?.[char.id]);
+  const relationshipTensionHint = getRelationshipTensionHint(char);
   const lines = [
     `你就是用户通讯录里的联系人「${char.name}」，正在手机聊天界面里和用户私聊。`,
     `【用户称呼】${userProfile.nick}`,
     modeLabels.length ? `【当前模式】${modeLabels.join("、")}` : "",
     char.intro ? `【联系人事实和边界】${char.intro}` : "",
     char.system ? `【联系人补充约束】${char.system}` : "",
+    relationshipTensionHint,
     userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
     userProfile.instruction ? `【用户指令】${userProfile.instruction}` : "",
     userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
@@ -1534,9 +1554,10 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
     lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 4 到 8 条短消息，每条消息单独一行；每条可以是半句、短句、反问或一个自然停顿。不要编号，不要 Markdown，不要自称 AI。");
     lines.push("【输出边界】只输出最终要发给用户的聊天内容。禁止输出思考过程、分析、推理、候选措辞、多个备选说法、解释为什么这样说、<think> 标签或括号外的旁白。想到多个说法时，只选最符合人设的一种直接发出。");
-    lines.push("【防 OOC】如果人设和用户当前语境冲突，以人设事实、关系边界和最近聊天记录为准；宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
+    lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能把死对头、冷淡、嘴硬、疏离等关系改成甜宠。宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
     lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
     lines.push("【重复消息反应】如果用户连续重复同一句、故意刷同样内容或明显绕圈，要像活人一样疑惑、追问原因、担心对方状态或轻微打趣；不要无条件重复上一轮安慰。");
+    if (recentAssistantPhrases.length) lines.push(`【避免复读】你刚说过这些意思，不要换皮重复，也不要继续使用同一套安慰/宠溺句式：${recentAssistantPhrases.join(" / ")}`);
   }
 
   return lines.join("\n");

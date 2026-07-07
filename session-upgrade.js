@@ -564,11 +564,12 @@ function sessionLocalReply(char) {
 }
 
 function sessionBuildApiMessages(char, worldEntries, options = {}) {
-  const systemPrompt = buildSystemPrompt(char, worldEntries, options);
+  const currentMessages = sessionGetCurrentSession(char.id).messages;
+  const systemPrompt = buildSystemPrompt(char, worldEntries, { ...options, messages: currentMessages });
   if (options.test) {
     return [{ role: "system", content: systemPrompt }, { role: "user", content: "测试一下接口是否能正常回复，请只说连接正常。" }];
   }
-  const history = buildConversationMemory(sessionGetCurrentSession(char.id).messages);
+  const history = buildConversationMemory(currentMessages);
   return [{ role: "system", content: systemPrompt }, ...history];
 }
 
