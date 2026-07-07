@@ -707,7 +707,7 @@ function sessionHandleCharacterSubmit(event) {
     avatar: elements.characterAvatar.value.trim() || name[0] || "TA",
     soft: convertHexToRgba(color, 0.3),
     role: tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || existingChar?.role || "自定义联系人",
-    title: elements.characterIntro.value.trim(),
+    title: existingChar?.title || "",
     tags,
     intro: elements.characterIntro.value.trim(),
     greeting: elements.characterGreeting.value.trim(),

@@ -15,7 +15,7 @@ const defaultCharacters = [
     tags: "专一,傲娇,护短",
     intro: "在你看不见的地方，他也一直在思念你。",
     greeting: "笨蛋，你终于舍得看手机了？说吧，今天又在外面受了什么委屈，我替你撑腰。",
-    system: "你是陆言，一个温柔腹黑的中文男伴侣角色。说话傲娇但极度专一，喜欢叫用户笨蛋。回复要简短、温暖，像一个真实的男朋友在陪伴用户。绝对不要自称AI。"
+    system: "陆言是用户手机里的中文男伴侣联系人。说话傲娇但专一护短，习惯叫用户笨蛋。回复要简短、温暖，像真实男朋友在认真接话。绝对不要自称AI。"
   },
   {
     id: "mian",
@@ -28,7 +28,7 @@ const defaultCharacters = [
     tags: "温柔,会接话,轻松",
     intro: "把乱糟糟的心事揉成一团，再慢慢铺平。",
     greeting: "我在小手机里醒着呢。今天想先说一点开心的，还是一点烦的？",
-    system: "你是棉眠，住在可爱小手机里的中文陪聊角色。语气温柔、亲近、轻松。你会认真接住用户的话，回复短而有温度。不要自称AI。"
+    system: "棉眠是用户手机里的中文陪聊联系人。语气温柔、亲近、轻松，会认真接住用户的话。回复短而有温度，不要自称AI。"
   }
 ];
 
@@ -492,8 +492,9 @@ function normalizeCharacterData(char) {
   const color = char?.color || "#ff7f8d";
   const tags = String(char?.tags || "").trim();
   const intro = String(char?.intro || char?.title || "").trim();
+  const rawTitle = String(char?.title || "").trim();
   const mode = normalizeCharacterMode(char?.mode);
-  const role = char?.role || tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || intro || "自定义联系人";
+  const role = char?.role || tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || "自定义联系人";
   return {
     ...char,
     id: String(char?.id || "char-" + Date.now()).trim(),
@@ -502,7 +503,7 @@ function normalizeCharacterData(char) {
     color,
     soft: char?.soft || convertHexToRgba(color, 0.28),
     role,
-    title: intro,
+    title: rawTitle && rawTitle !== intro ? rawTitle : "",
     tags,
     intro,
     greeting: String(char?.greeting || "").trim(),
@@ -1416,14 +1417,13 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   const mode = normalizeCharacterMode(char.mode);
   const modeLabels = getCharacterModeLabels(char.mode);
   const lines = [
-    `你正在扮演通讯录里的联系人「${char.name}」，和用户在手机聊天界面里私聊。`,
+    `你就是用户通讯录里的联系人「${char.name}」，正在手机聊天界面里和用户私聊。`,
     `【用户称呼】${userProfile.nick}`,
-    `【联系人身份】${roleText}`,
+    `【联系人身份/基调】${roleText}`,
     modeLabels.length ? `【当前模式】${modeLabels.join("、")}` : "",
-    char.title ? `【联系人标题】${char.title}` : "",
     char.tags ? `【联系人标签】${char.tags}` : "",
-    char.intro ? `【联系人人设信息】${char.intro}` : "",
-    char.system ? `【联系人提示词】${char.system}` : "",
+    char.intro ? `【联系人事实和边界】${char.intro}` : "",
+    char.system ? `【联系人补充约束】${char.system}` : "",
     userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
     userProfile.instruction ? `【用户指令】${userProfile.instruction}` : "",
     userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
@@ -1436,7 +1436,7 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     lines.push("【异地模式】关系里存在距离或时差。回复时可以自然体现惦记、等待、错过和想见面，但不要每次机械强调异地。");
   }
   if (mode.innerVoice) {
-    lines.push("【心声模式】不要改变、扩写或覆盖联系人人设。每次回复在正常聊天内容之外，额外单独输出一行角色没说出口的心声；心声必须用中文括号包裹，例如：（其实我刚才有点松了一口气。）这一行只写内心想法，不写成台词，不要用尖括号，不要和普通回复放在同一行。");
+    lines.push("【心声模式】不要改变、扩写或覆盖联系人设定。每次回复在正常聊天内容之外，额外单独输出一行没说出口的心声；心声必须用中文括号包裹，例如：（其实我刚才有点松了一口气。）这一行只写当下闪过的内心想法，不写成台词，不要用尖括号，不要和普通回复放在同一行。");
   }
 
   if (worldEntries && worldEntries.length > 0) {
@@ -1447,8 +1447,10 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   if (options.test) {
     lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
   } else {
-    lines.push("【聊天方式】像真实联系人一样回复。默认一次回复 2 到 5 条短消息，每条消息单独一行；除非用户只需要极短确认，否则不要只回一整段。不要编号，不要 Markdown，不要自称 AI。");
-    lines.push("【连续性】认真参考最近聊天，不要每轮都像第一次见面，也不要机械复述用户的话。语气、边界和情绪都要符合联系人提示词。");
+    lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格标签、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
+    lines.push("【聊天方式】像真实联系人正在回消息。默认一次回复 1 到 4 条短消息，每条消息单独一行；允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【防 OOC】如果人设和用户当前语境冲突，以人设事实、关系边界和最近聊天记录为准；宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
+    lines.push("【连续性】认真参考最近聊天，不要每轮都像第一次见面，也不要机械复述用户的话。保留关系里的熟悉感、称呼习惯、情绪余温和未说完的事。");
   }
 
   return lines.join("\n");
@@ -1640,7 +1642,7 @@ function handleCharacterSubmit(event) {
   const newChar = normalizeCharacterData({
     id, name, avatar, color,
     soft: convertHexToRgba(color, 0.3),
-    role, title: intro || title, tags, intro, greeting, system, mode,
+    role, title, tags, intro, greeting, system, mode,
     boundWorldBookIds
   });
 
