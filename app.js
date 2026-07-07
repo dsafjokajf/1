@@ -718,16 +718,129 @@ function limitAssistantChunks(chunks, maxChunks = 4, maxChars = 520) {
   return limited;
 }
 
+function ensureMinimumAssistantChunks(chunks, minChunks = 3) {
+  const out = chunks.map((item) => String(item || "").trim()).filter(Boolean);
+  if (assistantMessageInnerVoiceMode || out.length >= minChunks) return out;
+  for (let index = 0; index < out.length && out.length < minChunks; index += 1) {
+    const value = out[index];
+    if (value.length < 12) continue;
+    const splitAt = findNaturalSplitIndex(value);
+    if (splitAt <= 0 || splitAt >= value.length - 1) continue;
+    const first = value.slice(0, splitAt + 1).trim();
+    const second = value.slice(splitAt + 1).trim();
+    if (first && second) out.splice(index, 1, first, second);
+  }
+  return out;
+}
+
+function findNaturalSplitIndex(value) {
+  const text = String(value || "");
+  const start = Math.max(3, Math.floor(text.length * 0.28));
+  const end = Math.min(text.length - 2, Math.ceil(text.length * 0.78));
+  const punctuation = "，,。！？!?；;、 ";
+  for (let index = start; index <= end; index += 1) {
+    if (punctuation.includes(text[index])) return index;
+  }
+  return text.length > 18 ? Math.floor(text.length / 2) : -1;
+}
+
+function parseAssistantActionLine(line) {
+  const value = String(line || "").trim();
+  const match = value.match(/^【动作[:：]\s*(转账|收款|撤回|引用|拍一拍|拍)\s*([^】]*)】$/);
+  if (!match) return null;
+  const typeMap = { "转账": "transfer", "收款": "receive", "撤回": "recall", "引用": "quote", "拍一拍": "nudge", "拍": "nudge" };
+  const type = typeMap[match[1]];
+  const raw = (match[2] || "").trim();
+  if (type === "transfer") {
+    const amountMatch = raw.match(/(?:￥|¥)?\s*(\d+(?:\.\d{1,2})?)/);
+    const amount = amountMatch ? Number(amountMatch[1]) : 0;
+    const note = raw.replace(amountMatch?.[0] || "", "").replace(/^[-:：，,\s]+/, "").slice(0, 40);
+    return amount > 0 ? { type, amount: Number(amount.toFixed(2)), note } : null;
+  }
+  return { type, target: raw };
+}
+
+function splitAssistantActionBlocks(text) {
+  const blocks = [];
+  let textBuffer = [];
+  const flushText = () => {
+    const value = textBuffer.join("\n").trim();
+    if (value) blocks.push({ type: "text", value });
+    textBuffer = [];
+  };
+  String(text || "").split(/\n+/).forEach((line) => {
+    const action = parseAssistantActionLine(line);
+    if (action) {
+      flushText();
+      blocks.push({ type: "action", value: action });
+    } else {
+      textBuffer.push(line);
+    }
+  });
+  flushText();
+  return blocks;
+}
+
+function getLastMessageForAction(char, predicate) {
+  const list = (typeof sessionGetCurrentSession === "function" ? sessionGetCurrentSession(char.id).messages : appState.messages[char.id]) || [];
+  return [...list].reverse().find((message) => !message.loading && predicate(message));
+}
+
+function assistantActionMessage(action, char) {
+  if (!action) return null;
+  if (action.type === "transfer") return assistantTransferMessage(action.amount, action.note);
+  if (action.type === "nudge") return systemNotice(`${char.name}拍了拍你${action.target ? action.target : ""}`);
+  if (action.type === "recall") return systemNotice(`${char.name}撤回了一条消息`);
+  if (action.type === "quote") {
+    const target = getLastMessageForAction(char, (message) => message.role === "user");
+    return target ? assistantMessage(action.target || "接你刚才那句。", "API", "text", buildQuoteFromMessage(target, char)) : null;
+  }
+  if (action.type === "receive") {
+    const target = getLastMessageForAction(char, (message) => message.role === "user" && message.type === "transfer" && message.transfer?.status !== "received");
+    if (target) target.transfer = { ...target.transfer, status: "received", receivedAt: Date.now() };
+    return target ? systemNotice(`${char.name}已收款`) : null;
+  }
+  return null;
+}
+
+function buildQuoteFromMessage(message, char) {
+  return {
+    author: message.role === "user" ? getUserProfile().nick : char.name,
+    text: message.type === "transfer" ? "[转账] " + (message.transfer?.amount || "") : String(message.content || "").slice(0, 180)
+  };
+}
+
 function assistantMessagesFromReply(text, char, meta) {
   const mode = normalizeCharacterMode(char?.mode);
   assistantMessageInnerVoiceMode = mode.innerVoice;
   try {
     const cleaned = stripUnlicensedRomance(stripModelReasoning(text), char);
-    return limitAssistantChunks(splitAssistantReply(cleaned), mode.innerVoice ? 9 : 6, mode.innerVoice ? 960 : 760).map((chunk) => {
-      if (mode.innerVoice && isInnerVoiceChunk(chunk)) {
-        return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
-      }
+    const blocks = splitAssistantActionBlocks(cleaned);
+    const textBlocks = blocks.filter((block) => block.type === "text");
+    const allText = textBlocks.map((block) => block.value).join("\n");
+    const textMessageFromChunk = (chunk) => {
+      if (mode.innerVoice && isInnerVoiceChunk(chunk)) return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
       return assistantMessage(chunk, meta);
+    };
+    const makeTextMessages = (value, min = 1) => limitAssistantChunks(ensureMinimumAssistantChunks(splitAssistantReply(value), mode.innerVoice ? 1 : min), mode.innerVoice ? 9 : 6, mode.innerVoice ? 960 : 760).map(textMessageFromChunk);
+    const naturalTextChunks = textBlocks.flatMap((block) => splitAssistantReply(block.value));
+    if (!mode.innerVoice && textBlocks.length && naturalTextChunks.length < 3) {
+      const messages = [];
+      let insertedText = false;
+      blocks.forEach((block) => {
+        if (block.type === "action") {
+          const actionMessage = assistantActionMessage(block.value, char);
+          if (actionMessage) messages.push(actionMessage);
+        } else if (!insertedText) {
+          messages.push(...makeTextMessages(allText, 3));
+          insertedText = true;
+        }
+      });
+      return messages;
+    }
+    return blocks.flatMap((block) => {
+      if (block.type === "action") return [assistantActionMessage(block.value, char)].filter(Boolean);
+      return makeTextMessages(block.value);
     });
   } finally {
     assistantMessageInnerVoiceMode = false;
@@ -1058,10 +1171,11 @@ function renderMessage(m, char) {
   const quote = m.quote ? `<div class="quoted-line"><strong>${escapeHtml(m.quote.author || "引用")}</strong><span>${escapeHtml(m.quote.text || "")}</span></div>` : "";
   const avatar = isAssistant ? `<button class="bubble-avatar" data-avatar-nudge="1" type="button" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</button>` : "";
   const body = m.loading ? `<span class="typing"><i></i><i></i><i></i></span>` : (m.type === "transfer" ? renderTransferBubble(m) : quote + formatRichText(m.content));
+  const transferStatusClass = m.type === "transfer" && m.transfer?.status === "received" ? " is-received" : "";
   return `
     <article class="message ${isAssistant ? "assistant" : "user"}" data-message-id="${escapeHtml(String(m.time))}">
       ${avatar}
-      <div class="bubble ${m.type === "transfer" ? "transfer-bubble" : ""}">${body}</div>
+      <div class="bubble ${m.type === "transfer" ? "transfer-bubble" : ""}${transferStatusClass}">${body}</div>
       <span class="message-meta">${escapeHtml(m.meta || formatTime(m.time))}</span>
     </article>
   `;
@@ -1074,7 +1188,9 @@ function formatRichText(text) {
 function renderTransferBubble(message) {
   const amount = Number(message.transfer?.amount || 0).toFixed(2);
   const note = message.transfer?.note ? `<p>${escapeHtml(message.transfer.note)}</p>` : "";
-  return `<div class="transfer-card"><span class="transfer-icon">￥</span><div><strong>转账 ￥${escapeHtml(amount)}</strong>${note}<small>微信转账</small></div></div>`;
+  const received = message.transfer?.status === "received";
+  const status = received ? "已收款" : (message.role === "assistant" ? "待你收款" : "待对方收款");
+  return `<div class="transfer-card"><span class="transfer-icon">￥</span><div><strong>转账 ￥${escapeHtml(amount)}</strong>${note}<small>${escapeHtml(status)}</small></div></div>`;
 }
 
 function bindRenderedMessageActions(container, char, messages) {
@@ -1100,7 +1216,8 @@ function showMessageMenu(event, message, char) {
   closeMessageMenu();
   const menu = document.createElement("div");
   menu.className = "message-menu";
-  menu.innerHTML = `<button type="button" data-action="quote">引用</button><button type="button" data-action="recall">撤回</button>`;
+  const canReceive = message.type === "transfer" && message.role === "assistant" && message.transfer?.status !== "received";
+  menu.innerHTML = `<button type="button" data-action="quote">引用</button>${canReceive ? `<button type="button" data-action="receive">收款</button>` : ""}<button type="button" data-action="recall">撤回</button>`;
   document.body.appendChild(menu);
   const rect = document.querySelector(".screen")?.getBoundingClientRect() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
   const x = Math.min(Math.max(event.clientX || rect.left + 80, rect.left + 12), rect.right - 132);
@@ -1109,6 +1226,10 @@ function showMessageMenu(event, message, char) {
   menu.style.top = y + "px";
   menu.querySelector("[data-action='quote']").addEventListener("click", () => {
     setCurrentQuote(message, char);
+    closeMessageMenu();
+  });
+  menu.querySelector("[data-action='receive']")?.addEventListener("click", () => {
+    receiveTransfer(message, char, "user");
     closeMessageMenu();
   });
   menu.querySelector("[data-action='recall']").addEventListener("click", () => {
@@ -1171,6 +1292,17 @@ function sendNudge(char) {
   appendMessageToActiveSession(systemNotice(`${user.nick}拍了拍${char.name}${user.nudge || ""}`));
   saveState();
   renderMessages();
+}
+
+function receiveTransfer(message, char, receiver = "user") {
+  if (!message || message.type !== "transfer" || message.transfer?.status === "received") return false;
+  message.transfer = { ...message.transfer, status: "received", receivedAt: Date.now() };
+  const actor = receiver === "assistant" ? char.name : "你";
+  appendMessageToActiveSession(systemNotice(`${actor}已收款`));
+  saveState();
+  renderMessages();
+  if (typeof sessionRenderChatList === "function") sessionRenderChatList();
+  return true;
 }
 
 function appendMessageToActiveSession(message) {
@@ -1622,6 +1754,7 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     lines.push("【去 AI 味】禁用当然啦、没问题、很高兴为你解答、希望对你有帮助、还有其他问题吗、我理解你的感受、作为一个 AI 等客服式套话。不要逐条总结、不要讲道理上价值、不要把每句话都解释得圆满。");
     lines.push("【温度证据】回复的亲密度必须能从联系人事实、最近聊天和用户明确建立的关系里找到证据。没有证据时，宁可克制、短促、别扭、礼貌或保持距离；不要用通用陪聊习惯补成恋爱脑。");
     lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 3 到 6 条短消息，每条消息单独一行；每条尽量短，优先半句、短句、反问、停顿或一句吐槽。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【可用动作】你也能像用户一样转账、收款、撤回、引用和拍一拍。确实符合人设和当下情境时，单独输出隐藏动作行：转账用【动作：转账 金额 备注】；收用户转账用【动作：收款】；撤回上一条自己的消息用【动作：撤回】；引用用户上一条消息用【动作：引用 要说的话】；拍一拍用户用【动作：拍一拍 后缀】。动作行不算聊天气泡，普通文本仍必须 3 到 6 条。不要滥用动作。");
     lines.push("【输出格式】本应用只接受微信式聊天气泡纯文本。严禁 XML/HTML 标签、<message>/<narration>/<item>/<think>、状态栏、代码块、JSON、列表编号、预设模板格式；不要退回任何外部格式，只输出要发给用户的气泡文本。");
     lines.push("【用户主权】不要替用户说话、行动、决定、描写表情、身体反应或内心感受。可以回应用户说过的话，也可以描述环境或他人对用户的客观影响，但不能操控用户。");
     lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能覆盖关系边界。禁止因为用户说累、委屈、晚安、想你或重复消息就擅自升级关系。宁可少说一点，也不要突然甜宠、突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
@@ -1694,10 +1827,22 @@ function replaceLoadingMessage(charId, replacement) {
   else list.push(replacement);
 }
 
-function assistantMessage(content, meta, type = "text") {
+function assistantMessage(content, meta, type = "text", quote = null) {
   const resolvedType = type === "text" && meta === "API" && assistantMessageInnerVoiceMode && isInnerVoiceChunk(content) ? "innerVoice" : type;
   const resolvedContent = resolvedType === "innerVoice" ? normalizeInnerVoiceText(content) : content;
-  return { role: "assistant", type: resolvedType, content: resolvedContent, meta, time: Date.now() };
+  return { role: "assistant", type: resolvedType, content: resolvedContent, meta, quote, time: Date.now() };
+}
+
+function assistantTransferMessage(amount, note = "") {
+  const value = Number(amount || 0);
+  return {
+    role: "assistant",
+    type: "transfer",
+    content: `转账 ￥${value.toFixed(2)}${note ? " " + note : ""}`,
+    meta: "API",
+    transfer: { amount: Number(value.toFixed(2)), note, status: "sent" },
+    time: Date.now()
+  };
 }
 
 function userMessage(content, quote = null) {
