@@ -641,7 +641,7 @@ function assistantMessagesFromReply(text, char, meta) {
   const mode = normalizeCharacterMode(char?.mode);
   assistantMessageInnerVoiceMode = mode.innerVoice;
   try {
-    return limitAssistantChunks(splitAssistantReply(stripModelReasoning(text)), mode.innerVoice ? 4 : 3, mode.innerVoice ? 560 : 420).map((chunk) => {
+    return limitAssistantChunks(splitAssistantReply(stripModelReasoning(text)), mode.innerVoice ? 9 : 8, mode.innerVoice ? 960 : 900).map((chunk) => {
       if (mode.innerVoice && isInnerVoiceChunk(chunk)) {
         return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
       }
@@ -1291,8 +1291,26 @@ function splitAssistantReply(text) {
   };
   const protectedCleaned = protectInnerVoiceSegments(cleaned);
   const fromLines = protectedCleaned.split(/\n+/).map(normalizePart).filter(Boolean);
-  if (fromLines.length >= 2) return expandInnerVoiceParts(fromLines);
-  return expandInnerVoiceParts([protectedCleaned]);
+  const expanded = fromLines.length >= 2 ? expandInnerVoiceParts(fromLines) : expandInnerVoiceParts([protectedCleaned]);
+  if (assistantMessageInnerVoiceMode || expanded.length >= 4) return expanded;
+  const splitAfter = (value, punctuationPattern) => {
+    const out = [];
+    let buf = "";
+    for (const ch of String(value || "")) {
+      buf += ch;
+      if (punctuationPattern.test(ch)) {
+        out.push(buf);
+        buf = "";
+      }
+    }
+    if (buf.trim()) out.push(buf);
+    return out.map(normalizePart).filter(Boolean);
+  };
+  let naturalParts = expanded.flatMap((part) => splitAfter(part, /[。！？!?]/));
+  if (naturalParts.length < 4 && expanded.join("\n").length > 60) {
+    naturalParts = expanded.flatMap((part) => splitAfter(part, /[。！？!?，,；;]/));
+  }
+  return naturalParts.length ? naturalParts : expanded;
 }
 
 function sleep(ms) {
@@ -1514,7 +1532,7 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
   } else {
     lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
-    lines.push("【聊天方式】像真实联系人正在回消息。你可以按当下情绪和人设自然决定回复一到三条；想分成多条气泡时，每条消息单独一行。允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 4 到 8 条短消息，每条消息单独一行；每条可以是半句、短句、反问或一个自然停顿。不要编号，不要 Markdown，不要自称 AI。");
     lines.push("【输出边界】只输出最终要发给用户的聊天内容。禁止输出思考过程、分析、推理、候选措辞、多个备选说法、解释为什么这样说、<think> 标签或括号外的旁白。想到多个说法时，只选最符合人设的一种直接发出。");
     lines.push("【防 OOC】如果人设和用户当前语境冲突，以人设事实、关系边界和最近聊天记录为准；宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
     lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
