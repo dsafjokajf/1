@@ -22,15 +22,13 @@
         </header>
 
         <header class="topbar">
-          <button class="icon-button" id="clearChatButton" type="button" title="清空当前聊天" aria-label="清空当前聊天">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10M10 7V5h4v2M8 10l1 9h6l1-9M6 7h12"/></svg>
-          </button>
+          <span class="topbar-spacer" aria-hidden="true"></span>
           <div class="brand">
             <strong>Mianer Phone</strong>
             <span id="connectionState">本地陪伴</span>
           </div>
-          <button class="icon-button dark" id="newButton" type="button" title="新建" aria-label="新建">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <button class="icon-button dark" id="userPersonaButton" type="button" title="User 人设" aria-label="User 人设">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 20c1.5-4 14.5-4 16 0"/></svg>
           </button>
         </header>
 
@@ -83,11 +81,21 @@
             <div class="section-head compact">
               <div>
                 <h1>设置</h1>
-                <p>接口、会话和人设</p>
+                <p>接口和会话</p>
               </div>
             </div>
 
             <form class="settings-form" id="settingsForm">
+              <label>
+                <span>模型平台</span>
+                <select id="apiPlatform" name="platform">
+                  <option value="openai">OpenAI</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="glm">GLM / 智谱</option>
+                  <option value="MyAPI">MyAPI</option>
+                </select>
+              </label>
               <label>
                 <span>API 地址</span>
                 <input id="apiEndpoint" name="endpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off">
@@ -106,10 +114,6 @@
                   <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" placeholder="0.85">
                 </label>
               </div>
-              <label>
-                <span>我的人设</span>
-                <textarea id="userPersona" name="userPersona" rows="4" maxlength="1200" placeholder="写你的称呼、身份、关系、说话习惯和偏好"></textarea>
-              </label>
               <label class="checkline">
                 <input id="rememberKey" name="rememberKey" type="checkbox">
                 <span>在本机记住 Key</span></label><label class="checkline"><input id="manualReplyMode" name="manualReplyMode" type="checkbox"><span>手动点击按钮才会回复</span>
@@ -149,6 +153,44 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z"/><path d="m19 12 2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-1.6-.9L14.7 4H9.3L9 7.1a7.5 7.5 0 0 0-1.6.9L5 7l-2 3.5L5 12l-2 1.5L5 17l2.4-1a7.5 7.5 0 0 0 1.6.9l.3 3.1h5.4l.3-3.1a7.5 7.5 0 0 0 1.6-.9L19 17l2-3.5L19 12Z"/></svg><span>设置</span>
           </button>
         </nav>
+
+        <aside class="drawer" id="userPersonaDrawer" aria-hidden="true" aria-label="User 人设">
+          <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="userPersonaDrawerTitle">
+            <div class="drawer-head">
+              <div>
+                <h2 id="userPersonaDrawerTitle">User 人设</h2>
+                <p>你的名字、头像字和人设会参与聊天提示词。</p>
+              </div>
+              <button class="icon-button" id="closeUserPersonaDrawer" type="button" title="关闭" aria-label="关闭 User 人设">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <form class="editor-form" id="userPersonaForm">
+              <div class="two-fields user-profile-fields">
+                <label>
+                  <span>我的名字</span>
+                  <input id="userNick" type="text" maxlength="28" placeholder="我的名字" autocomplete="off">
+                </label>
+                <label>
+                  <span>头像字</span>
+                  <input id="userAvatarText" type="text" maxlength="2" placeholder="我" autocomplete="off">
+                </label>
+              </div>
+              <label>
+                <span>我的人设</span>
+                <textarea id="userPersona" rows="6" maxlength="1600" placeholder="写你的称呼、身份、关系、说话习惯和偏好"></textarea>
+              </label>
+              <label>
+                <span>拍一拍</span>
+                <input id="userNudge" type="text" maxlength="40" placeholder="的脑袋" autocomplete="off">
+              </label>
+              <div class="button-row sticky-actions">
+                <button class="ghost-button" id="resetUserPersonaButton" type="button">清空</button>
+                <button class="solid-button" type="submit">保存</button>
+              </div>
+            </form>
+          </div>
+        </aside>
 
         <aside class="drawer" id="characterDrawer" aria-hidden="true" aria-label="编辑联系人">
           <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="characterDrawerTitle">

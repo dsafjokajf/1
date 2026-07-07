@@ -64,8 +64,7 @@ const elements = {
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
   sendButton: document.querySelector("#sendButton"),
-  clearChatButton: document.querySelector("#clearChatButton"),
-  newButton: document.querySelector("#newButton"),
+  userPersonaButton: document.querySelector("#userPersonaButton"),
   
   // 选项卡
   tabs: document.querySelectorAll(".tab"),
@@ -84,6 +83,7 @@ const elements = {
 
   // 设置
   settingsForm: document.querySelector("#settingsForm"),
+  apiPlatform: document.querySelector("#apiPlatform"),
   endpoint: document.querySelector("#apiEndpoint"),
   apiKey: document.querySelector("#apiKey"),
   model: document.querySelector("#apiModel"),
@@ -101,6 +101,15 @@ const elements = {
   importButton: document.querySelector("#importButton"),
   resetButton: document.querySelector("#resetButton"),
   importFile: document.querySelector("#importFile"),
+
+  // User 人设抽屉
+  userPersonaDrawer: document.querySelector("#userPersonaDrawer"),
+  closeUserPersonaDrawer: document.querySelector("#closeUserPersonaDrawer"),
+  userPersonaForm: document.querySelector("#userPersonaForm"),
+  userNick: document.querySelector("#userNick"),
+  userAvatarText: document.querySelector("#userAvatarText"),
+  userNudge: document.querySelector("#userNudge"),
+  resetUserPersonaButton: document.querySelector("#resetUserPersonaButton"),
 
   // 编辑抽屉
   characterDrawer: document.querySelector("#characterDrawer"),
@@ -135,7 +144,8 @@ const elements = {
 };
 
 const defaultConfig = {
-  endpoint: "https://api.openai.com/v1/chat/completions",
+  platform: "openai",
+  endpoint: "https://api.openai.com",
   model: "gpt-4.1-mini",
   temperature: 0.85,
   rememberKey: false,
@@ -151,10 +161,21 @@ const ApiHandler = {
   geminiFallbackModels: ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"],
 
   inferPlatform(config) {
+    if (config?.platform) return config.platform;
     const endpoint = String(config?.endpoint || "").toLowerCase();
     const model = String(config?.model || "").toLowerCase();
     if (endpoint.includes("generativelanguage.googleapis.com") || endpoint.includes("googleapis.com/v1beta/models") || model.startsWith("gemini-")) return "gemini";
+    if (endpoint.includes("api.deepseek.com") || model.startsWith("deepseek-")) return "deepseek";
+    if (endpoint.includes("bigmodel.cn") || model.startsWith("glm-")) return "glm";
     return "openai";
+  },
+
+  getDefaultEndpoint(platform) {
+    if (platform === "gemini") return "https://generativelanguage.googleapis.com";
+    if (platform === "deepseek") return "https://api.deepseek.com";
+    if (platform === "glm") return "https://open.bigmodel.cn/api/paas/v4";
+    if (platform === "MyAPI") return "";
+    return "https://api.openai.com";
   },
 
   ensureHttps(url) {
@@ -165,15 +186,17 @@ const ApiHandler = {
     return cleaned.replace(/\/+$/, "");
   },
 
-  normalizeChatEndpoint(endpoint) {
-    const url = this.ensureHttps(endpoint || defaultConfig.endpoint);
+  normalizeChatEndpoint(endpoint, platform = "openai") {
+    const url = this.ensureHttps(endpoint || this.getDefaultEndpoint(platform));
+    if (!url) throw new Error("请填写 API 接口地址。");
     if (/\/chat\/completions$/i.test(url)) return url;
     if (/\/v\d+$/i.test(url) || /\/inference$/i.test(url)) return url + "/chat/completions";
     return url + "/v1/chat/completions";
   },
 
-  normalizeModelsEndpoint(endpoint) {
-    let url = this.ensureHttps(endpoint || defaultConfig.endpoint);
+  normalizeModelsEndpoint(endpoint, platform = "openai") {
+    let url = this.ensureHttps(endpoint || this.getDefaultEndpoint(platform));
+    if (!url) throw new Error("请填写 API 接口地址。");
     url = url.replace(/\/chat\/completions$/i, "");
     if (/\/v\d+$/i.test(url) || /\/inference$/i.test(url)) return url + "/models";
     return url + "/v1/models";
@@ -192,6 +215,7 @@ const ApiHandler = {
   },
 
   generateChatPayload(platform, endpoint, apiKey, model, messages, config = {}) {
+    platform = platform || "openai";
     const temperature = config.temperature ?? defaultConfig.temperature;
     const maxTokens = config.maxTokens || 2048;
     const headers = { "Content-Type": "application/json" };
@@ -216,7 +240,7 @@ const ApiHandler = {
 
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     return {
-      url: this.normalizeChatEndpoint(endpoint),
+      url: this.normalizeChatEndpoint(endpoint, platform),
       options: {
         method: "POST",
         headers,
@@ -226,6 +250,7 @@ const ApiHandler = {
   },
 
   async fetchModels(platform, endpoint, apiKey, config = {}) {
+    platform = platform || "openai";
     if (platform === "gemini") {
       if (!apiKey) return this.geminiFallbackModels;
       const url = `${this.normalizeGeminiBase(endpoint)}/v1beta/models?key=${encodeURIComponent(apiKey)}`;
@@ -239,7 +264,7 @@ const ApiHandler = {
         .sort();
     }
 
-    const url = this.normalizeModelsEndpoint(endpoint);
+    const url = this.normalizeModelsEndpoint(endpoint, platform);
     const headers = { "Content-Type": "application/json" };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const response = await fetch(config.corsProxyMode ? this.applyCorsProxy(url) : url, { method: "GET", headers });
@@ -255,7 +280,15 @@ const ApiHandler = {
   parseChatResponse(platform, data) {
     let raw = platform === "gemini"
       ? data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("")
-      : data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || data?.message?.content || data?.reply || data?.content || data?.output_text || data?.output?.[0]?.content?.[0]?.text;
+      : data?.choices?.[0]?.message?.content ||
+        data?.choices?.[0]?.text ||
+        data?.message?.content ||
+        data?.reply ||
+        data?.content ||
+        data?.output_text ||
+        data?.output?.[0]?.content?.map?.((p) => p.text || p.content || "").join("") ||
+        data?.output?.[0]?.content?.[0]?.text;
+    if (Array.isArray(raw)) raw = raw.map((p) => p.text || p.content || "").join("");
     if (typeof raw === "string") {
       raw = raw.replace(/([？！])。+/g, "$1").replace(/([?!])\.+/g, "$1").replace(/([？！])\.+/g, "$1").replace(/([?!])。+/g, "$1");
     }
@@ -291,6 +324,21 @@ function init() {
 }
 
 function bindEvents() {
+  elements.apiPlatform.addEventListener("change", () => {
+    const nextDefault = ApiHandler.getDefaultEndpoint(elements.apiPlatform.value);
+    const current = elements.endpoint.value.trim().replace(/\/+$/, "");
+    const officialEndpoints = ["openai", "gemini", "deepseek", "glm"].flatMap((p) => {
+      const base = ApiHandler.getDefaultEndpoint(p);
+      return [base, base + "/v1", base + "/v1/chat/completions", base + "/chat/completions"];
+    });
+    if (nextDefault && (!current || officialEndpoints.includes(current))) elements.endpoint.value = nextDefault;
+    const suggestedModel = { gemini: "gemini-1.5-flash", deepseek: "deepseek-chat", glm: "glm-4-flash" }[elements.apiPlatform.value];
+    if (suggestedModel && (!elements.apiModelCustom.value.trim() || /^(gpt-|gemini-|deepseek-|glm-)/i.test(elements.apiModelCustom.value.trim()))) {
+      elements.apiModelCustom.value = suggestedModel;
+      if ([...elements.model.options].some((opt) => opt.value === "custom")) elements.model.value = "custom";
+    }
+    populateModelsDropdown();
+  });
   elements.endpoint.addEventListener("change", populateModelsDropdown);
   elements.apiKey.addEventListener("change", populateModelsDropdown);
   elements.corsProxyMode.addEventListener("change", populateModelsDropdown);
@@ -304,21 +352,14 @@ function bindEvents() {
     }
   });
 
-  elements.clearChatButton.addEventListener("click", () => {
-    const character = getActiveCharacter();
-    appState.messages[character.id] = [assistantMessage(character.greeting, "开场")];
-    saveState();
-    renderMessages();
+  elements.userPersonaButton.addEventListener("click", openUserPersonaDrawer);
+  elements.closeUserPersonaDrawer.addEventListener("click", closeUserPersonaDrawer);
+  elements.userPersonaForm.addEventListener("submit", saveUserPersonaFromForm);
+  elements.resetUserPersonaButton.addEventListener("click", resetUserPersonaForm);
+  elements.userPersonaDrawer.addEventListener("click", (event) => {
+    if (event.target === elements.userPersonaDrawer) closeUserPersonaDrawer();
   });
 
-  elements.newButton.addEventListener("click", () => {
-    const activeTab = document.querySelector(".tab.is-active")?.dataset.tab || "chat";
-    if (activeTab === "world") {
-      openWorldDrawer();
-    } else {
-      openCharacterDrawer();
-    }
-  });
 
   elements.tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -415,23 +456,35 @@ function loadConfig() {
     const parsed = JSON.parse(localStorage.getItem(configKey) || "{}");
     const rememberedKey = localStorage.getItem(keyStorageKey) || "";
     const sessionKey = sessionStorage.getItem(keyStorageKey) || "";
+    const legacyPlatform = localStorage.getItem("apiPlatform") || "";
+    const platform = parsed.platform || legacyPlatform || defaultConfig.platform;
+    const legacyEndpoint = localStorage.getItem("apiEndpoint") || "";
+    const legacyModel = localStorage.getItem("apiModel") || "";
+    const legacyKey = localStorage.getItem("apiKey") || "";
+    const legacyPersona = localStorage.getItem("user_persona") || "";
     return {
       ...defaultConfig,
       ...parsed,
-      apiKey: rememberedKey || sessionKey || ""
+      platform,
+      endpoint: parsed.endpoint || legacyEndpoint || ApiHandler.getDefaultEndpoint(platform) || "",
+      model: parsed.model || legacyModel || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model),
+      userPersona: legacyPersona || parsed.userPersona || "",
+      apiKey: rememberedKey || sessionKey || legacyKey || ""
     };
   } catch {
-    return { ...defaultConfig, apiKey: "" };
+    return { ...defaultConfig, endpoint: ApiHandler.getDefaultEndpoint(defaultConfig.platform), apiKey: "" };
   }
 }
 
 function readConfigFromForm() {
+  const platform = elements.apiPlatform.value || defaultConfig.platform;
   const selectedModel = elements.model.value;
   const customModel = elements.apiModelCustom.value.trim();
   let model = selectedModel === "custom" ? customModel : selectedModel;
-  if (!model || model === "fetching") model = customModel || apiConfig.model || defaultConfig.model;
+  if (!model || model === "fetching") model = customModel || apiConfig.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
   return {
-    endpoint: elements.endpoint.value.trim() || defaultConfig.endpoint,
+    platform,
+    endpoint: elements.endpoint.value.trim() || ApiHandler.getDefaultEndpoint(platform) || "",
     model,
     temperature: clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2),
     rememberKey: elements.rememberKey.checked,
@@ -448,6 +501,7 @@ function saveConfigFromForm() {
   apiConfig = readConfigFromForm();
 
   localStorage.setItem(configKey, JSON.stringify({
+    platform: apiConfig.platform,
     endpoint: apiConfig.endpoint,
     model: apiConfig.model,
     temperature: apiConfig.temperature,
@@ -464,10 +518,18 @@ function saveConfigFromForm() {
   otherStore.removeItem(keyStorageKey);
   if (apiConfig.apiKey) keyStore.setItem(keyStorageKey, apiConfig.apiKey);
   else keyStore.removeItem(keyStorageKey);
+
+  localStorage.setItem("apiPlatform", apiConfig.platform);
+  localStorage.setItem("apiEndpoint", apiConfig.endpoint);
+  localStorage.setItem("apiModel", apiConfig.model);
+  if (apiConfig.apiKey) localStorage.setItem("apiKey", apiConfig.apiKey);
+  else localStorage.removeItem("apiKey");
+  localStorage.setItem("user_persona", apiConfig.userPersona || "");
 }
 
 function syncConfigForm() {
-  elements.endpoint.value = apiConfig.endpoint || defaultConfig.endpoint;
+  elements.apiPlatform.value = apiConfig.platform || defaultConfig.platform;
+  elements.endpoint.value = apiConfig.endpoint || ApiHandler.getDefaultEndpoint(elements.apiPlatform.value) || "";
   // Skip raw value restore
   elements.temperature.value = apiConfig.temperature ?? defaultConfig.temperature;
   elements.apiKey.value = apiConfig.apiKey || "";
@@ -481,6 +543,66 @@ function syncConfigForm() {
   elements.manualReplyMode.addEventListener("change", () => {
     elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
   });
+}
+
+function getUserProfile(config = apiConfig) {
+  const storedNick = localStorage.getItem("user_nick") || localStorage.getItem("userNick") || "";
+  const nick = storedNick.trim() || "玩家";
+  const avatarText = (localStorage.getItem("user_avatar_text") || nick.slice(0, 2) || "我").trim().slice(0, 2) || "我";
+  const persona = (localStorage.getItem("user_persona") || config?.userPersona || "").trim();
+  const nudge = (localStorage.getItem("user_nudge") || "的脑袋").trim() || "的脑袋";
+  return { nick, avatarText, persona, nudge };
+}
+
+function openUserPersonaDrawer() {
+  const user = getUserProfile();
+  elements.userNick.value = user.nick === "玩家" ? "" : user.nick;
+  elements.userAvatarText.value = user.avatarText;
+  elements.userPersona.value = user.persona;
+  elements.userNudge.value = user.nudge;
+  elements.userPersonaDrawer.classList.add("is-open");
+  elements.userPersonaDrawer.setAttribute("aria-hidden", "false");
+  setTimeout(() => elements.userNick.focus(), 60);
+}
+
+function closeUserPersonaDrawer() {
+  elements.userPersonaDrawer.classList.remove("is-open");
+  elements.userPersonaDrawer.setAttribute("aria-hidden", "true");
+}
+
+function persistUserPersona(persona) {
+  apiConfig = { ...apiConfig, userPersona: persona };
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem(configKey) || "{}"); } catch { stored = {}; }
+  localStorage.setItem(configKey, JSON.stringify({ ...stored, userPersona: persona }));
+  localStorage.setItem("user_persona", persona);
+}
+
+function saveUserPersonaFromForm(event) {
+  event.preventDefault();
+  const nick = elements.userNick.value.trim() || "玩家";
+  const avatarText = (elements.userAvatarText.value.trim() || nick.slice(0, 2) || "我").slice(0, 2);
+  const persona = elements.userPersona.value.trim();
+  const nudge = elements.userNudge.value.trim() || "的脑袋";
+  localStorage.setItem("user_nick", nick);
+  localStorage.setItem("user_avatar_text", avatarText);
+  localStorage.setItem("user_nudge", nudge);
+  persistUserPersona(persona);
+  updateConnectionLabel("User 人设已保存");
+  closeUserPersonaDrawer();
+  setTimeout(() => updateConnectionLabel(), 2000);
+}
+
+function resetUserPersonaForm() {
+  if (!confirm("清空 User 人设吗？")) return;
+  elements.userNick.value = "";
+  elements.userAvatarText.value = "我";
+  elements.userPersona.value = "";
+  elements.userNudge.value = "的脑袋";
+  localStorage.removeItem("user_nick");
+  localStorage.setItem("user_avatar_text", "我");
+  localStorage.setItem("user_nudge", "的脑袋");
+  persistUserPersona("");
 }
 
 function updateConnectionLabel(status) {
@@ -738,6 +860,10 @@ async function callChatApiWithOptions(char, worldEntries, options = {}) {
     throw new Error("请先填写 API Key，或开启代理不需要前端 Key 模式。");
   }
 
+  if ((config.platform || ApiHandler.inferPlatform(config)) === "MyAPI" && !config.endpoint) {
+    throw new Error("MyAPI 模式需要填写 API 接口地址。");
+  }
+
   const apiMessages = buildApiMessages(char, worldEntries, options);
   const platform = ApiHandler.inferPlatform(config);
   const model = config.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
@@ -762,7 +888,7 @@ async function fetchWithRetry(url, options) {
   let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await fetch(url, options);
+      const response = await fetchWithTimeout(url, options, 45000);
       if (response.ok || (response.status < 500 && response.status !== 429)) return response;
       lastError = response;
     } catch (error) {
@@ -774,17 +900,33 @@ async function fetchWithRetry(url, options) {
   throw lastError;
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("请求超时，请检查接口地址、网络或代理。出错时不会一直卡在思考中了。");
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function buildSystemPrompt(char, worldEntries, options = {}) {
-  const userPersona = (options.config?.userPersona || apiConfig.userPersona || "").trim();
+  const userProfile = getUserProfile(options.config || apiConfig);
+  const userPersona = (options.config?.userPersona || userProfile.persona || apiConfig.userPersona || "").trim();
   const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || char.title || "自定义联系人";
   const lines = [
     `你正在扮演通讯录里的联系人「${char.name}」，和用户在手机聊天界面里私聊。`,
+    `【用户称呼】${userProfile.nick}`,
     `【联系人身份】${roleText}`,
     char.title ? `【联系人标题】${char.title}` : "",
     char.tags ? `【联系人标签】${char.tags}` : "",
     char.intro ? `【联系人简介】${char.intro}` : "",
     char.system ? `【联系人提示词】${char.system}` : "",
-    userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。"
+    userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
+    userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
   ].filter(Boolean);
 
   if (worldEntries && worldEntries.length > 0) {
@@ -850,7 +992,7 @@ function localReply(char) {
   const latest = (appState.messages[char.id] || []).filter((m) => m.role === "user").slice(-1)[0]?.content || "";
   const next = latest.length > 20 ? latest.slice(0, 20) + "..." : latest;
   
-  return "（在可爱手机里认真地听着你说完「" + (next || "悄悄话") + "」）\n\n笨蛋，我现在还在本地陪伴模式哦。你可以在右上角的“设置”里配置好API连接，之后我们就可以无障碍地自由对话啦！在这之前，我会一直乖乖守在这里陪着你的，放心吧。";
+  return "（在可爱手机里认真地听着你说完「" + (next || "悄悄话") + "」）\n\n笨蛋，我现在还在本地陪伴模式哦。你可以在底部“设置”里配置好 API 连接，之后我们就可以无障碍地自由对话啦！在这之前，我会一直乖乖守在这里陪着你的，放心吧。";
 }
 
 function ensureMessageList(charId) {
@@ -1232,6 +1374,8 @@ function resetToDefaults() {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(configKey);
     localStorage.removeItem(keyStorageKey);
+    sessionStorage.removeItem(keyStorageKey);
+    ["apiPlatform", "apiEndpoint", "apiKey", "apiModel", "user_persona", "user_nick", "user_avatar_text", "user_nudge"].forEach((key) => localStorage.removeItem(key));
     alert("重置完毕，正在重新加载。");
     location.reload();
   }
@@ -1242,7 +1386,13 @@ async function populateModelsDropdown() {
   select.innerHTML = "<option value=\x22fetching\x22>正在从上游 API 获取模型列表...</option>";
   const draftConfig = readConfigFromForm();
   const platform = ApiHandler.inferPlatform(draftConfig);
-  const fallbackModels = platform === "gemini" ? ApiHandler.geminiFallbackModels : ApiHandler.fallbackModels;
+  const fallbackModels = platform === "gemini"
+    ? ApiHandler.geminiFallbackModels
+    : platform === "deepseek"
+      ? ["deepseek-chat", "deepseek-coder"]
+      : platform === "glm"
+        ? ["glm-4-flash", "glm-4-plus"]
+        : ApiHandler.fallbackModels;
   let models = fallbackModels;
 
   try {
