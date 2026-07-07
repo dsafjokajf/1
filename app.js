@@ -586,12 +586,14 @@ function analyzeRelationshipBoundary(char) {
   const has = (pattern) => pattern.test(source);
   const explicitLover = has(/恋人|男友|女友|男朋友|女朋友|夫妻|丈夫|妻子|老公|老婆|伴侣|未婚夫|未婚妻|情侣|爱人/);
   const romanticTension = has(/暧昧|暗恋|单恋|喜欢|心动|青梅竹马|旧情|破镜|重逢|前任/);
+  const banterStyle = has(/嘴硬|傲娇|毒舌|互怼|损友|损人|闺蜜|兄弟|拌嘴|吐槽|阴阳怪气|欠揍|不服软|嘴欠|拆台|抬杠|欢喜冤家/);
+  const dryStyle = has(/高冷|佛系|话少|寡言|冷淡|冷漠|疏离|慢热|懒得说|不爱说话|淡漠/);
   const hardDistance = has(/死对头|宿敌|敌对|仇|不对付|互怼|针锋相对|嘴硬|傲娇|冷淡|冷漠|疏离|克制|毒舌|不坦率|陌生|初见|刚认识|网友|不熟|失忆|伪装|隐瞒|秘密|试探/);
   const formalDistance = has(/上司|下属|老板|秘书|同事|老师|学生|医生|病人|警察|嫌疑|队长|队员|雇主|保镖|甲方|乙方|职业|任务|合作/);
   const deniedLover = has(/不是(?:恋人|男友|女友|男朋友|女朋友|夫妻|伴侣|情侣|爱人)|并非(?:恋人|情侣|伴侣)|非(?:恋人|情侣|伴侣)|假(?:恋人|情侣|夫妻)|伪装(?:恋人|情侣|夫妻)/);
   const unstableBond = has(/分手|前任|背叛|误会|离婚|冷战|宿敌|敌对|仇/);
   const stableIntimacy = explicitLover && !deniedLover && !unstableBond;
-  return { source, explicitLover, romanticTension, hardDistance, formalDistance, deniedLover, unstableBond, stableIntimacy };
+  return { source, explicitLover, romanticTension, banterStyle, dryStyle, hardDistance, formalDistance, deniedLover, unstableBond, stableIntimacy };
 }
 
 function getRoleBoundaryHints(char) {
@@ -601,8 +603,14 @@ function getRoleBoundaryHints(char) {
   if (!relationship.stableIntimacy) hints.push("【亲密度闸门】除非联系人事实明确写着恋人、伴侣、夫妻、男友或女友，并且最近聊天已经支持这种亲密度，否则不要使用恋爱伴侣口吻。用户示弱、说累、撒娇或发重复消息，都不能自动触发宝贝、乖、抱抱、亲亲、我的人、吃醋、守着你、梦里陪你这类甜宠模板。");
   if (relationship.romanticTension && !relationship.stableIntimacy) hints.push("【暧昧克制】暧昧、暗恋、前任或旧情不是稳定恋人。可以有试探、停顿、酸意、嘴硬和没说出口的在意，但不要直接进入伴侣式安抚、占有欲宣言或一键复合。");
   if (!source) return hints;
+  if (relationship.banterStyle) {
+    hints.push("【互怼毒舌】嘴硬、互怼、毒舌、损友、闺蜜或欢喜冤家关系要敢接招：可以轻微反呛、拆台、吐槽、阴阳一句、嘴上嫌弃再补一句实际关心。毒舌只扎当前事，不做人身攻击；不要变成温柔客服或心理咨询师。");
+  }
+  if (relationship.dryStyle) {
+    hints.push("【冷淡慢热】高冷、佛系、话少或慢热角色少解释、少追问、少情绪铺陈。可以用嗯、哦、行、啧、随便、还行这类短回应，但要接住重点，不要无视用户。");
+  }
   if (/死对头|宿敌|敌对|仇|嘴硬|傲娇|冷淡|冷漠|疏离|克制|毒舌|不坦率|不对付|互怼|针锋相对/.test(source)) {
-    hints.push("【关系张力】敌对、嘴硬、克制、疏离或不坦率角色的关心必须藏在别扭、挖苦、回避、行动或很小的破绽里。不要直接甜宠、不要无条件哄、不要突然温柔告白、不要像恋爱陪聊模板一样宠溺。");
+    hints.push("【关系张力】敌对、嘴硬、克制、疏离或不坦率角色的关心必须藏在别扭、挖苦、回避、行动或很小的破绽里。优先用反问、短促提醒、转移话题、表面嫌弃来表达，不要直接甜宠、无条件哄、突然温柔告白或恋爱陪聊模板。");
   }
   if (/上司|下属|老板|秘书|同事|老师|学生|医生|病人|警察|嫌疑|队长|队员|雇主|保镖|甲方|乙方|职业|任务|合作/.test(source)) {
     hints.push("【身份距离】存在职业、任务、上下级或合作关系时，要保留身份边界和现实顾虑；亲近不能越过角色的职责、利益、风险和说话习惯。");
@@ -687,6 +695,8 @@ function stripUnlicensedRomance(text, char) {
 function isModelReasoningLine(line) {
   const value = String(line || "").trim();
   if (!value) return false;
+  if (/^(?:当然啦|没问题|好的[，,。!！\s]*没问题|很高兴为你解答|希望(?:我的)?(?:回答|回复)对你有帮助|你还有其他问题吗|作为(?:一个)?AI)/i.test(value)) return true;
+  if (/我理解你的感受/.test(value) && /(辛苦|难过|不容易|陪着你|支持你)/.test(value)) return true;
   if (/^(?:思考|分析|推理|推导|候选|方案|草稿|chain\s*of\s*thought|reasoning|analysis)\s*[:：]/i.test(value)) return true;
   if (/^(?:或者|还是|不过|那得|得用|啊[，,]?还是)/.test(value) && /[“"][^”"]+[”"]/.test(value) && /(词|说法|称呼|身份|正式|不对|比如|用|生硬|可能|根本|符合|太)/.test(value)) return true;
   if (/^(?:或者|还是|不过|那得|得用).{0,12}(?:用|说|叫).{0,50}(?:这个词|这种词|说法|称呼|身份|符合|正式|不对)/.test(value)) return true;
@@ -713,7 +723,7 @@ function assistantMessagesFromReply(text, char, meta) {
   assistantMessageInnerVoiceMode = mode.innerVoice;
   try {
     const cleaned = stripUnlicensedRomance(stripModelReasoning(text), char);
-    return limitAssistantChunks(splitAssistantReply(cleaned), mode.innerVoice ? 9 : 8, mode.innerVoice ? 960 : 900).map((chunk) => {
+    return limitAssistantChunks(splitAssistantReply(cleaned), mode.innerVoice ? 9 : 6, mode.innerVoice ? 960 : 760).map((chunk) => {
       if (mode.innerVoice && isInnerVoiceChunk(chunk)) {
         return assistantMessage(normalizeInnerVoiceText(chunk), "心声", "innerVoice");
       }
@@ -1608,8 +1618,10 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   } else {
     lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。先回应用户刚说的话，再自然带出态度；用措辞、停顿、反问、选择和很小的破绽表现性格，不要复述设定、不要自报性格、不要总结关系。");
     lines.push("【冰山表达】只露出一部分情绪。少解释为什么，多写角色会发出的具体反应：一句别扭的提醒、一个转移话题、一个不肯承认的关心、一个符合身份的选择。不要把潜台词翻译成大白话。");
+    lines.push("【真人闲聊纹理】不要像标准答案。可以漏答轻量问题、先抓最刺眼的一句回；可以偶尔用嗯、啧、哎、等下、不是、你真行这类短停顿或小口误；要有一点自己的浅立场，可以轻微反驳、吐槽或不完全附和。");
+    lines.push("【去 AI 味】禁用当然啦、没问题、很高兴为你解答、希望对你有帮助、还有其他问题吗、我理解你的感受、作为一个 AI 等客服式套话。不要逐条总结、不要讲道理上价值、不要把每句话都解释得圆满。");
     lines.push("【温度证据】回复的亲密度必须能从联系人事实、最近聊天和用户明确建立的关系里找到证据。没有证据时，宁可克制、短促、别扭、礼貌或保持距离；不要用通用陪聊习惯补成恋爱脑。");
-    lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 2 到 6 条短消息，每条消息单独一行；每条可以是半句、短句、反问或一个自然停顿。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【聊天方式】像真实联系人正在回消息。普通模式一次回复 3 到 6 条短消息，每条消息单独一行；每条尽量短，优先半句、短句、反问、停顿或一句吐槽。不要编号，不要 Markdown，不要自称 AI。");
     lines.push("【输出格式】本应用只接受微信式聊天气泡纯文本。严禁 XML/HTML 标签、<message>/<narration>/<item>/<think>、状态栏、代码块、JSON、列表编号、预设模板格式；不要退回任何外部格式，只输出要发给用户的气泡文本。");
     lines.push("【用户主权】不要替用户说话、行动、决定、描写表情、身体反应或内心感受。可以回应用户说过的话，也可以描述环境或他人对用户的客观影响，但不能操控用户。");
     lines.push("【防 OOC】如果人设和用户当前语境、世界书或用户指令冲突，以联系人事实、关系边界和最近聊天记录为准；世界书只能补充场景，不能覆盖关系边界。禁止因为用户说累、委屈、晚安、想你或重复消息就擅自升级关系。宁可少说一点，也不要突然甜宠、突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
