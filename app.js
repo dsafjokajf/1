@@ -490,11 +490,11 @@ function normalizeCharacterMode(mode) {
 function normalizeCharacterData(char) {
   const name = String(char?.name || "未命名联系人").trim() || "未命名联系人";
   const color = char?.color || "#ff7f8d";
-  const tags = String(char?.tags || "").trim();
+  const tags = "";
   const intro = String(char?.intro || char?.title || "").trim();
   const rawTitle = String(char?.title || "").trim();
   const mode = normalizeCharacterMode(char?.mode);
-  const role = char?.role || tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || "自定义联系人";
+  const role = char?.role || "自定义联系人";
   return {
     ...char,
     id: String(char?.id || "char-" + Date.now()).trim(),
@@ -528,6 +528,38 @@ function normalizeMessageData(message) {
     quote,
     transfer: type === "transfer" && message?.transfer ? message.transfer : null
   };
+}
+
+function formatMessageForMemory(message) {
+  if (!message || message.loading || !message.content) return null;
+  if (["system", "innerVoice"].includes(message.type)) return null;
+  const role = message.role === "user" ? "user" : "assistant";
+  const quote = message.quote?.text ? `引用${message.quote.author || "上一条"}：${message.quote.text}\n` : "";
+  const content = (quote + String(message.content || "")).trim();
+  return content ? { role, content } : null;
+}
+
+function buildConversationMemory(messages, maxMessages = 80, maxChars = 16000) {
+  const merged = [];
+  (Array.isArray(messages) ? messages : []).map(formatMessageForMemory).filter(Boolean).forEach((message) => {
+    const last = merged[merged.length - 1];
+    if (last && last.role === message.role && last.content.length + message.content.length < 1400) {
+      last.content += "\n" + message.content;
+    } else {
+      merged.push({ ...message });
+    }
+  });
+
+  const selected = [];
+  let charCount = 0;
+  for (let index = merged.length - 1; index >= 0 && selected.length < maxMessages; index -= 1) {
+    const message = merged[index];
+    const nextCount = charCount + message.content.length;
+    if (selected.length >= 12 && nextCount > maxChars) break;
+    selected.unshift(message);
+    charCount = nextCount;
+  }
+  return selected;
 }
 
 function getCharacterModeLabels(mode) {
@@ -840,8 +872,6 @@ function renderActivePersonaCard() {
   document.documentElement.style.setProperty("--active-color", char.color);
   document.documentElement.style.setProperty("--active-soft", char.soft || "rgba(255,127,141,0.18)");
   
-  const tagsHtml = (char.tags || "").split(/[,，]/).filter(t => t.trim()).map(t => `<span class="tag-label">${escapeHtml(t.trim())}</span>`).join("");
-  const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || "自定义角色";
   const personaPreview = getPersonaPreview(char.title || char.intro || "", 44);
   
   elements.activePersona.innerHTML = `
@@ -850,8 +880,7 @@ function renderActivePersonaCard() {
     </button>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
-      <p class="role-desc">${escapeHtml(roleText)}${personaPreview ? " · " + escapeHtml(personaPreview) : ""}</p>
-      <div class="tags-row">${tagsHtml}</div>
+      <p class="role-desc">${escapeHtml(personaPreview || "联系人")}</p>
     </div>
     <button class="icon-button" id="editActivePersonaButton" type="button" title="编辑设定">
       <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7m-9.5-3.5 9-9a2.12 2.12 0 1 1 3 3l-9 9h-3v-3z"/></svg>
@@ -1413,15 +1442,12 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 function buildSystemPrompt(char, worldEntries, options = {}) {
   const userProfile = getUserProfile(options.config || apiConfig);
   const userPersona = (options.config?.userPersona || userProfile.persona || apiConfig.userPersona || "").trim();
-  const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || char.title || "自定义联系人";
   const mode = normalizeCharacterMode(char.mode);
   const modeLabels = getCharacterModeLabels(char.mode);
   const lines = [
     `你就是用户通讯录里的联系人「${char.name}」，正在手机聊天界面里和用户私聊。`,
     `【用户称呼】${userProfile.nick}`,
-    `【联系人身份/基调】${roleText}`,
     modeLabels.length ? `【当前模式】${modeLabels.join("、")}` : "",
-    char.tags ? `【联系人标签】${char.tags}` : "",
     char.intro ? `【联系人事实和边界】${char.intro}` : "",
     char.system ? `【联系人补充约束】${char.system}` : "",
     userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
@@ -1447,10 +1473,10 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
   if (options.test) {
     lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
   } else {
-    lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格标签、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
+    lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
     lines.push("【聊天方式】像真实联系人正在回消息。默认一次回复 1 到 4 条短消息，每条消息单独一行；允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
     lines.push("【防 OOC】如果人设和用户当前语境冲突，以人设事实、关系边界和最近聊天记录为准；宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
-    lines.push("【连续性】认真参考最近聊天，不要每轮都像第一次见面，也不要机械复述用户的话。保留关系里的熟悉感、称呼习惯、情绪余温和未说完的事。");
+    lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
   }
 
   return lines.join("\n");
@@ -1465,10 +1491,7 @@ function buildApiMessages(char, worldEntries, options = {}) {
     ];
   }
 
-  const history = appState.messages[char.id]
-    .filter((m) => !m.loading && m.content)
-    .slice(-24)
-    .map((m) => ({ role: m.role, content: m.type === "innerVoice" ? `【心声】${normalizeInnerVoiceText(m.content)}` : m.content }));
+  const history = buildConversationMemory(appState.messages[char.id]);
 
   return [{ role: "system", content: systemPrompt }, ...history];
 }
@@ -1590,7 +1613,7 @@ function openCharacterDrawer(char = null) {
     elements.characterAvatar.value = char.avatar || char.name[0];
     elements.characterColor.value = char.color;
     elements.characterTitle.value = char.title || "";
-    elements.characterTags.value = char.tags || "";
+    if (elements.characterTags) elements.characterTags.value = "";
     elements.characterIntro.value = char.intro || "";
     elements.characterGreeting.value = char.greeting || "";
     elements.characterSystem.value = char.system || "";
@@ -1603,7 +1626,7 @@ function openCharacterDrawer(char = null) {
     elements.characterAvatar.value = "";
     elements.characterColor.value = "#ff7f8d";
     elements.characterTitle.value = "";
-    elements.characterTags.value = "";
+    if (elements.characterTags) elements.characterTags.value = "";
     elements.characterIntro.value = "";
     elements.characterGreeting.value = "";
     elements.characterSystem.value = "";
@@ -1627,13 +1650,13 @@ function handleCharacterSubmit(event) {
   const avatar = elements.characterAvatar.value.trim() || name[0] || "TA";
   const color = elements.characterColor.value;
   const title = elements.characterTitle.value.trim();
-  const tags = elements.characterTags.value.trim();
+  const tags = "";
   const intro = elements.characterIntro.value.trim();
   const greeting = elements.characterGreeting.value.trim();
   const system = elements.characterSystem.value.trim();
   const existingChar = appState.characters.find(c => c.id === id);
   const mode = readCharacterModeForm();
-  const role = tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || existingChar?.role || "自定义联系人";
+  const role = existingChar?.role || "自定义联系人";
 
   // 读取绑定的世界书选择项
   const checkedBoxes = document.querySelectorAll("input[name=\x22boundWorldBooks\x22]:checked");

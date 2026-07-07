@@ -356,7 +356,7 @@ function sessionRenderChatList() {
   sessionHydrateElements();
   if (!elements.chatList) return;
   const query = (elements.chatSearch?.value || "").trim().toLowerCase();
-  const visible = appState.characters.filter((char) => !query || [char.name, char.title, char.tags, char.intro].join(" ").toLowerCase().includes(query));
+  const visible = appState.characters.filter((char) => !query || [char.name, char.title, char.intro].join(" ").toLowerCase().includes(query));
   if (elements.chatOverview) elements.chatOverview.textContent = `${appState.characters.length} 位联系人 · ${appState.archives.length} 个存档`;
   if (!visible.length) {
     elements.chatList.innerHTML = `<div class="empty-state">没有找到聊天对象。</div>`;
@@ -403,14 +403,12 @@ function sessionRenderActivePersonaCard() {
   const char = sessionGetActiveCharacter();
   document.documentElement.style.setProperty("--active-color", char.color);
   document.documentElement.style.setProperty("--active-soft", char.soft || "rgba(255,127,141,0.18)");
-  const tagsHtml = (char.tags || "").split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
-  const roleText = char.role || (char.tags || "").split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || "自定义角色";
+  const personaPreview = getPersonaPreview(char.title || char.intro || "", 44);
   elements.activePersona.innerHTML = `
     <button class="avatar-big" data-active-avatar-nudge="1" type="button" style="background:${escapeHtml(char.color)}" title="拍一拍" aria-label="拍一拍${escapeHtml(char.name)}"><span>${escapeHtml(char.avatar || char.name[0])}</span></button>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
-      <p>${escapeHtml(roleText)} · ${escapeHtml(char.title || char.intro || "")}</p>
-      <div class="tag-row">${tagsHtml}</div>
+      <p>${escapeHtml(personaPreview || "联系人")}</p>
     </div>
     <button class="icon-button persona-edit" id="editActivePersonaButton" type="button" title="编辑设定" aria-label="编辑联系人">
       <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7m-9.5-3.5 9-9a2.12 2.12 0 1 1 3 3l-9 9h-3v-3z"/></svg>
@@ -525,10 +523,7 @@ function sessionBuildApiMessages(char, worldEntries, options = {}) {
   if (options.test) {
     return [{ role: "system", content: systemPrompt }, { role: "user", content: "测试一下接口是否能正常回复，请只说连接正常。" }];
   }
-  const history = sessionGetCurrentSession(char.id).messages
-    .filter((message) => !message.loading && message.content && message.type !== "system")
-    .slice(-24)
-    .map((message) => ({ role: message.role, content: message.quote ? `引用${message.quote.author}：${message.quote.text}\n${message.content}` : message.content }));
+  const history = buildConversationMemory(sessionGetCurrentSession(char.id).messages);
   return [{ role: "system", content: systemPrompt }, ...history];
 }
 
@@ -649,7 +644,7 @@ function sessionFormatChatTime(timestamp) {
 
 function sessionRenderCharacterList() {
   const query = (elements.characterSearch?.value || "").trim().toLowerCase();
-  const filtered = appState.characters.filter((char) => !query || [char.name, char.title, char.tags, char.intro].join(" ").toLowerCase().includes(query));
+  const filtered = appState.characters.filter((char) => !query || [char.name, char.title, char.intro].join(" ").toLowerCase().includes(query));
   elements.characterCount.textContent = `${filtered.length} / ${appState.characters.length} 个联系人`;
   if (elements.contactStats) {
     elements.contactStats.innerHTML = `<div class="stat-pill"><strong>${appState.characters.length}</strong><span>联系人</span></div><div class="stat-pill"><strong>${appState.archives.length}</strong><span>聊天存档</span></div><div class="stat-pill"><strong>${appState.worldBook.length}</strong><span>世界书</span></div>`;
@@ -659,13 +654,12 @@ function sessionRenderCharacterList() {
     return;
   }
   elements.characterList.innerHTML = filtered.map((char) => {
-    const tags = (char.tags || "").split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 4).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
     const archiveCount = appState.archives.filter((archive) => archive.characterId === char.id).length;
     const preview = getPersonaPreview(char.intro || char.greeting || "", 72);
     return `
       <article class="item-card contact-card" style="--card-color:${escapeHtml(char.color)}">
-        <div class="item-top"><div class="avatar" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</div><div class="item-title"><strong>${escapeHtml(char.name)}</strong><span>${escapeHtml(char.title || char.role || "聊天联系人")}</span></div><span class="scope-tag">${archiveCount} 存档</span></div>
-        <p>${escapeHtml(preview)}</p><div class="tag-row">${tags}</div>
+        <div class="item-top"><div class="avatar" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</div><div class="item-title"><strong>${escapeHtml(char.name)}</strong><span>${escapeHtml(char.title || getPersonaPreview(char.intro, 28) || "聊天联系人")}</span></div><span class="scope-tag">${archiveCount} 存档</span></div>
+        <p>${escapeHtml(preview)}</p>
         <div class="item-actions"><button class="small-button chat-btn" type="button" data-id="${escapeHtml(char.id)}">聊天</button><button class="small-button edit-btn" type="button" data-id="${escapeHtml(char.id)}">编辑</button><button class="small-button is-danger delete-btn" type="button" data-id="${escapeHtml(char.id)}">删除</button></div>
       </article>
     `;
@@ -697,7 +691,7 @@ function sessionHandleCharacterSubmit(event) {
   const id = elements.characterId.value.trim() || "char-" + Date.now();
   const name = elements.characterName.value.trim() || "未命名联系人";
   const color = elements.characterColor.value;
-  const tags = elements.characterTags.value.trim();
+  const tags = "";
   const existingChar = appState.characters.find((char) => char.id === id);
   const checkedBoxes = document.querySelectorAll("input[name=\"boundWorldBooks\"]:checked");
   const nextChar = sessionNormalizeCharacter({
@@ -706,7 +700,7 @@ function sessionHandleCharacterSubmit(event) {
     color,
     avatar: elements.characterAvatar.value.trim() || name[0] || "TA",
     soft: convertHexToRgba(color, 0.3),
-    role: tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)[0] || existingChar?.role || "自定义联系人",
+    role: existingChar?.role || "自定义联系人",
     title: existingChar?.title || "",
     tags,
     intro: elements.characterIntro.value.trim(),
