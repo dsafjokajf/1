@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#f6fbfa">
   <title>Mianer 恋人小手机</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="session-upgrade.css">
 </head>
 <body>
   <main class="page" aria-label="Mianer 恋人小手机">
@@ -22,45 +23,72 @@
         </header>
 
         <header class="topbar">
-          <button class="icon-button" id="clearChatButton" type="button" title="清空当前聊天" aria-label="清空当前聊天">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10M10 7V5h4v2M8 10l1 9h6l1-9M6 7h12"/></svg>
+          <button class="icon-button dark" id="globalArchiveButton" type="button" title="聊天记录管理" aria-label="聊天记录管理">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/><path d="M3 10h18"/></svg>
           </button>
           <div class="brand">
             <strong>Mianer Phone</strong>
             <span id="connectionState">本地陪伴</span>
           </div>
-          <button class="icon-button dark" id="newButton" type="button" title="新建" aria-label="新建">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <button class="icon-button dark" id="userPersonaButton" type="button" title="User 人设" aria-label="User 人设">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 20c1.5-4 14.5-4 16 0"/></svg>
           </button>
         </header>
 
         <section class="viewport" aria-live="polite">
           <section class="view chat-view is-active" id="view-chat" data-view="chat" aria-label="聊天">
-            <nav class="character-strip" id="characterStrip" aria-label="选择角色"></nav>
+            <div class="chat-list-screen" id="chatListScreen">
+              <div class="section-head chat-list-head">
+                <div>
+                  <h1>聊天</h1>
+                  <p id="chatOverview">0 位联系人</p>
+                </div>
+              </div>
+              <div class="search-row compact-search">
+                <label class="sr-only" for="chatSearch">搜索聊天</label>
+                <input id="chatSearch" type="search" placeholder="搜索聊天">
+              </div>
+              <div class="chat-list" id="chatList"></div>
+            </div>
 
-            <section class="active-persona" id="activePersona" aria-label="当前角色"></section>
+            <div class="conversation-screen" id="conversationScreen" hidden>
+              <header class="conversation-head" id="conversationHead">
+                <div class="conversation-left-tools">
+                  <button class="icon-button light" id="backToChatsButton" type="button" title="返回聊天列表" aria-label="返回聊天列表">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                  </button>
+                </div>
+                <div class="conversation-title" id="conversationTitle"></div>
+              </header>
 
-            <section class="world-hints" id="worldHints" aria-label="已命中的世界书"></section>
+              <section class="active-persona" id="activePersona" aria-label="当前联系人" hidden></section>
+              <section class="world-hints" id="worldHints" aria-label="已命中的世界书"></section>
+              <section class="messages" id="messages" aria-label="聊天记录"></section>
 
-            <section class="messages" id="messages" aria-label="聊天记录"></section>
-
-            <form class="composer" id="chatForm">
-              <label class="sr-only" for="chatInput">输入消息</label>
-              <textarea id="chatInput" rows="1" maxlength="1600" placeholder="对他说点什么..." autocomplete="off"></textarea>
-              <button class="reply-button" id="replyButton" type="button" title="点击AI回复" style="display:none; margin-right: 5px;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14H11v-2h2zm0-3H11V7h2z"/></svg></button><button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送消息">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-5 16-3-7-8-1Z"/><path d="m12 13 8-9"/></svg>
-              </button>
-            </form>
+              <form class="composer" id="chatForm">
+                <label class="sr-only" for="chatInput">输入消息</label>
+                <textarea id="chatInput" rows="1" maxlength="1600" placeholder="对他说点什么..." autocomplete="off"></textarea>
+                <button class="reply-button" id="replyButton" type="button" title="点击AI回复" aria-label="点击AI回复"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg></button>
+                <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送消息">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-5 16-3-7-8-1Z"/><path d="m12 13 8-9"/></svg>
+                </button>
+              </form>
+            </div>
           </section>
 
-          <section class="view library-view" id="view-characters" data-view="characters" aria-label="角色库">
+          <section class="view library-view" id="view-characters" data-view="characters" aria-label="通讯录">
             <div class="section-head">
               <div>
-                <h1>角色</h1>
-                <p id="characterCount">0 个角色</p>
+                <h1>通讯录</h1>
+                <p id="characterCount">0 个联系人</p>
               </div>
-              <button class="solid-button" id="addCharacterButton" type="button">添加角色</button>
+              <button class="solid-button" id="addCharacterButton" type="button">添加联系人</button>
             </div>
+            <div class="search-row compact-search">
+              <label class="sr-only" for="characterSearch">搜索通讯录</label>
+              <input id="characterSearch" type="search" placeholder="搜索姓名、标签或简介">
+            </div>
+            <div class="contact-stats" id="contactStats"></div>
             <div class="list" id="characterList"></div>
           </section>
 
@@ -83,11 +111,21 @@
             <div class="section-head compact">
               <div>
                 <h1>设置</h1>
-                <p>OpenAI 兼容接口</p>
+                <p>接口和会话</p>
               </div>
             </div>
 
             <form class="settings-form" id="settingsForm">
+              <label>
+                <span>模型平台</span>
+                <select id="apiPlatform" name="platform">
+                  <option value="openai">OpenAI</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="glm">GLM / 智谱</option>
+                  <option value="MyAPI">MyAPI</option>
+                </select>
+              </label>
               <label>
                 <span>API 地址</span>
                 <input id="apiEndpoint" name="endpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off">
@@ -112,7 +150,7 @@
               </label>
               <label class="checkline">
                 <input id="proxyMode" name="proxyMode" type="checkbox">
-                <span>代理不需要前端 Key</span></label><label class="checkline"><input id="corsProxyMode" name="proxyMode" type="checkbox"><span>跨域(CORS)应急兼容模式(通过中转请求)</span>
+                <span>代理不需要前端 Key</span></label><label class="checkline"><input id="corsProxyMode" name="corsProxyMode" type="checkbox"><span>跨域(CORS)应急兼容模式(通过中转请求)</span>
               </label>
               <div class="button-row">
                 <button class="ghost-button" id="testButton" type="button">测试</button>
@@ -135,8 +173,8 @@
           <button class="tab is-active" type="button" data-tab="chat" aria-label="聊天">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14v9H9l-4 4V6Z"/></svg><span>聊天</span>
           </button>
-          <button class="tab" type="button" data-tab="characters" aria-label="角色">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-4 14.5-4 16 0"/></svg><span>角色</span>
+          <button class="tab" type="button" data-tab="characters" aria-label="通讯录">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-4 14.5-4 16 0"/></svg><span>通讯录</span>
           </button>
           <button class="tab" type="button" data-tab="world" aria-label="世界书">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v16H7.5A2.5 2.5 0 0 0 5 21V5.5Z"/><path d="M5 5.5V21"/></svg><span>世界书</span>
@@ -146,14 +184,83 @@
           </button>
         </nav>
 
-        <aside class="drawer" id="characterDrawer" aria-hidden="true" aria-label="编辑角色">
+        <aside class="drawer" id="archiveDrawer" aria-hidden="true" aria-label="聊天记录管理">
+          <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="archiveDrawerTitle">
+            <div class="drawer-head">
+              <div>
+                <h2 id="archiveDrawerTitle">聊天记录管理</h2>
+                <p id="archiveDrawerSubtitle">保存、载入和删除聊天存档。</p>
+              </div>
+              <button class="icon-button" id="closeArchiveDrawer" type="button" title="关闭" aria-label="关闭聊天记录管理">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <div class="archive-actions-main">
+              <label class="archive-name-field">
+                <span>存档名</span>
+                <input id="archiveNameInput" type="text" maxlength="40" placeholder="给当前聊天命名">
+              </label>
+              <button class="solid-button" id="saveArchiveButton" type="button">保存当前聊天</button>
+              <button class="ghost-button" id="startFreshArchiveButton" type="button">新聊天</button>
+            </div>
+            <div class="archive-toolbar">
+              <div class="segmented" role="group" aria-label="存档筛选">
+                <button class="is-active" type="button" data-archive-filter="current">当前联系人</button>
+                <button type="button" data-archive-filter="all">全部</button>
+              </div>
+              <label class="sr-only" for="archiveSearch">搜索存档</label>
+              <input id="archiveSearch" type="search" placeholder="搜索存档名">
+            </div>
+            <div class="archive-list" id="archiveList"></div>
+          </div>
+        </aside>
+
+        <aside class="drawer" id="userPersonaDrawer" aria-hidden="true" aria-label="User 人设">
+          <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="userPersonaDrawerTitle">
+            <div class="drawer-head">
+              <div>
+                <h2 id="userPersonaDrawerTitle">User 人设</h2>
+                <p>你的名字、头像字和人设会参与聊天提示词。</p>
+              </div>
+              <button class="icon-button" id="closeUserPersonaDrawer" type="button" title="关闭" aria-label="关闭 User 人设">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              </button>
+            </div>
+            <form class="editor-form" id="userPersonaForm">
+              <div class="two-fields user-profile-fields">
+                <label>
+                  <span>我的名字</span>
+                  <input id="userNick" type="text" maxlength="28" placeholder="我的名字" autocomplete="off">
+                </label>
+                <label>
+                  <span>头像字</span>
+                  <input id="userAvatarText" type="text" maxlength="2" placeholder="我" autocomplete="off">
+                </label>
+              </div>
+              <label>
+                <span>我的人设</span>
+                <textarea id="userPersona" rows="6" maxlength="1600" placeholder="写你的称呼、身份、关系、说话习惯和偏好"></textarea>
+              </label>
+              <label>
+                <span>拍一拍</span>
+                <input id="userNudge" type="text" maxlength="40" placeholder="的脑袋" autocomplete="off">
+              </label>
+              <div class="button-row sticky-actions">
+                <button class="ghost-button" id="resetUserPersonaButton" type="button">清空</button>
+                <button class="solid-button" type="submit">保存</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+
+        <aside class="drawer" id="characterDrawer" aria-hidden="true" aria-label="编辑联系人">
           <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="characterDrawerTitle">
             <div class="drawer-head">
               <div>
-                <h2 id="characterDrawerTitle">编辑角色</h2>
-                <p>他的性格、开场白和提示词都会保存到本机。</p>
+                <h2 id="characterDrawerTitle">编辑联系人</h2>
+                <p>TA 的性格、开场白和提示词都会保存到本机。</p>
               </div>
-              <button class="icon-button" id="closeCharacterDrawer" type="button" title="关闭" aria-label="关闭角色编辑">
+              <button class="icon-button" id="closeCharacterDrawer" type="button" title="关闭" aria-label="关闭联系人编辑">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
               </button>
             </div>
@@ -190,12 +297,12 @@
                 <textarea id="characterGreeting" rows="3" maxlength="420" required></textarea>
               </label>
               <label>
-                <span>角色提示词</span>
+                <span>联系人提示词</span>
                 <textarea id="characterSystem" rows="7" maxlength="2600" required></textarea></label><label><span>绑定/关联世界书设定项目</span><div id="characterWorldBooks" style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto; background: rgba(24,32,42,0.03); border: 1px solid rgba(24,32,42,0.08); padding: 10px; border-radius: 14px; margin-top: 5px;"></div>
               </label>
               <div class="button-row sticky-actions">
                 <button class="ghost-button" id="duplicateCharacterButton" type="button">复制</button>
-                <button class="solid-button" type="submit">保存角色</button>
+                <button class="solid-button" type="submit">保存联系人</button>
               </div>
             </form>
           </div>
@@ -206,7 +313,7 @@
             <div class="drawer-head">
               <div>
                 <h2 id="worldDrawerTitle">编辑世界书</h2>
-                <p>命中关键词后会注入到角色提示词里。</p>
+                <p>命中关键词后会注入到当前联系人的提示词里。</p>
               </div>
               <button class="icon-button" id="closeWorldDrawer" type="button" title="关闭" aria-label="关闭世界书编辑">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
@@ -255,6 +362,7 @@
     </section>
   </main>
 
+  <script src="session-upgrade.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

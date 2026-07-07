@@ -64,8 +64,7 @@ const elements = {
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
   sendButton: document.querySelector("#sendButton"),
-  clearChatButton: document.querySelector("#clearChatButton"),
-  newButton: document.querySelector("#newButton"),
+  userPersonaButton: document.querySelector("#userPersonaButton"),
   
   // 选项卡
   tabs: document.querySelectorAll(".tab"),
@@ -84,18 +83,33 @@ const elements = {
 
   // 设置
   settingsForm: document.querySelector("#settingsForm"),
+  apiPlatform: document.querySelector("#apiPlatform"),
   endpoint: document.querySelector("#apiEndpoint"),
   apiKey: document.querySelector("#apiKey"),
   model: document.querySelector("#apiModel"),
   temperature: document.querySelector("#temperature"),
   rememberKey: document.querySelector("#rememberKey"),
-  proxyMode: document.querySelector("#proxyMode"), corsProxyMode: document.querySelector("#corsProxyMode"), manualReplyMode: document.querySelector("#manualReplyMode"), replyButton: document.querySelector("#replyButton"), apiModelCustom: document.querySelector("#apiModelCustom"),
+  proxyMode: document.querySelector("#proxyMode"),
+  corsProxyMode: document.querySelector("#corsProxyMode"),
+  manualReplyMode: document.querySelector("#manualReplyMode"),
+  replyButton: document.querySelector("#replyButton"),
+  apiModelCustom: document.querySelector("#apiModelCustom"),
+  userPersona: document.querySelector("#userPersona"),
   testButton: document.querySelector("#testButton"),
   settingsNote: document.querySelector("#settingsNote"),
   exportButton: document.querySelector("#exportButton"),
   importButton: document.querySelector("#importButton"),
   resetButton: document.querySelector("#resetButton"),
   importFile: document.querySelector("#importFile"),
+
+  // User 人设抽屉
+  userPersonaDrawer: document.querySelector("#userPersonaDrawer"),
+  closeUserPersonaDrawer: document.querySelector("#closeUserPersonaDrawer"),
+  userPersonaForm: document.querySelector("#userPersonaForm"),
+  userNick: document.querySelector("#userNick"),
+  userAvatarText: document.querySelector("#userAvatarText"),
+  userNudge: document.querySelector("#userNudge"),
+  resetUserPersonaButton: document.querySelector("#resetUserPersonaButton"),
 
   // 编辑抽屉
   characterDrawer: document.querySelector("#characterDrawer"),
@@ -129,26 +143,172 @@ const elements = {
   worldHints: document.querySelector("#worldHints")
 };
 
-const defaultConfig = { manualReplyMode: false, corsProxyMode: false,
-  endpoint: "https://api.openai.com/v1/chat/completions",
+const defaultConfig = {
+  platform: "openai",
+  endpoint: "https://api.openai.com",
   model: "gpt-4.1-mini",
   temperature: 0.85,
   rememberKey: false,
-  proxyMode: false, manualReplyMode: false, customModelName: ""
+  proxyMode: false,
+  corsProxyMode: false,
+  manualReplyMode: false,
+  customModelName: "",
+  userPersona: ""
 };
 
-let appState = loadState();
+const ApiHandler = {
+  fallbackModels: ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "glm-4-flash", "claude-3-5-sonnet", "gemini-1.5-flash"],
+  geminiFallbackModels: ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"],
+
+  inferPlatform(config) {
+    if (config?.platform) return config.platform;
+    const endpoint = String(config?.endpoint || "").toLowerCase();
+    const model = String(config?.model || "").toLowerCase();
+    if (endpoint.includes("generativelanguage.googleapis.com") || endpoint.includes("googleapis.com/v1beta/models") || model.startsWith("gemini-")) return "gemini";
+    if (endpoint.includes("api.deepseek.com") || model.startsWith("deepseek-")) return "deepseek";
+    if (endpoint.includes("bigmodel.cn") || model.startsWith("glm-")) return "glm";
+    return "openai";
+  },
+
+  getDefaultEndpoint(platform) {
+    if (platform === "gemini") return "https://generativelanguage.googleapis.com";
+    if (platform === "deepseek") return "https://api.deepseek.com";
+    if (platform === "glm") return "https://open.bigmodel.cn/api/paas/v4";
+    if (platform === "MyAPI") return "";
+    return "https://api.openai.com";
+  },
+
+  ensureHttps(url) {
+    let cleaned = String(url || "").trim().replace(/\/+$/, "");
+    if (!cleaned) return "";
+    if (cleaned.startsWith("http://")) cleaned = "https://" + cleaned.slice(7);
+    else if (!/^https?:\/\//i.test(cleaned)) cleaned = "https://" + cleaned;
+    return cleaned.replace(/\/+$/, "");
+  },
+
+  normalizeChatEndpoint(endpoint, platform = "openai") {
+    const url = this.ensureHttps(endpoint || this.getDefaultEndpoint(platform));
+    if (!url) throw new Error("请填写 API 接口地址。");
+    if (/\/chat\/completions$/i.test(url)) return url;
+    if (/\/v\d+$/i.test(url) || /\/inference$/i.test(url)) return url + "/chat/completions";
+    return url + "/v1/chat/completions";
+  },
+
+  normalizeModelsEndpoint(endpoint, platform = "openai") {
+    let url = this.ensureHttps(endpoint || this.getDefaultEndpoint(platform));
+    if (!url) throw new Error("请填写 API 接口地址。");
+    url = url.replace(/\/chat\/completions$/i, "");
+    if (/\/v\d+$/i.test(url) || /\/inference$/i.test(url)) return url + "/models";
+    return url + "/v1/models";
+  },
+
+  normalizeGeminiBase(endpoint) {
+    let url = this.ensureHttps(endpoint || "https://generativelanguage.googleapis.com");
+    url = url.replace(/\/v1beta\/models\/.+:generateContent$/i, "");
+    url = url.replace(/\/v1\/models\/.+:generateContent$/i, "");
+    url = url.replace(/\/v1beta$/i, "").replace(/\/v1$/i, "");
+    return url;
+  },
+
+  applyCorsProxy(url) {
+    return "https://cors-anywhere.azm.workers.dev/" + url;
+  },
+
+  generateChatPayload(platform, endpoint, apiKey, model, messages, config = {}) {
+    platform = platform || "openai";
+    const temperature = config.temperature ?? defaultConfig.temperature;
+    const maxTokens = config.maxTokens || 2048;
+    const headers = { "Content-Type": "application/json" };
+
+    if (platform === "gemini") {
+      const modelName = String(model || "gemini-1.5-flash").replace(/^models\//, "");
+      const base = this.normalizeGeminiBase(endpoint);
+      const url = `${base}/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey || "")}`;
+      const systemText = messages.filter((m) => m.role === "system").map((m) => m.content).filter(Boolean).join("\n\n");
+      const contents = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: String(m.content || "") }] }))
+        .filter((m) => m.parts[0].text.trim());
+      if (contents.length === 0 || contents[0].role !== "user") {
+        contents.unshift({ role: "user", parts: [{ text: systemText ? `【系统指令】\n${systemText}\n\n请根据接下来的聊天继续回复用户。` : "请开始回复。" }] });
+      } else if (systemText) {
+        contents[0].parts[0].text = `【系统指令】\n${systemText}\n\n${contents[0].parts[0].text}`;
+      }
+      const bodyData = { contents, generationConfig: { maxOutputTokens: maxTokens, temperature } };
+      return { url, options: { method: "POST", headers, body: JSON.stringify(bodyData) } };
+    }
+
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    return {
+      url: this.normalizeChatEndpoint(endpoint, platform),
+      options: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: false })
+      }
+    };
+  },
+
+  async fetchModels(platform, endpoint, apiKey, config = {}) {
+    platform = platform || "openai";
+    if (platform === "gemini") {
+      if (!apiKey) return this.geminiFallbackModels;
+      const url = `${this.normalizeGeminiBase(endpoint)}/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(config.corsProxyMode ? this.applyCorsProxy(url) : url);
+      if (!response.ok) throw new Error("获取模型失败");
+      const data = await response.json();
+      return (data.models || [])
+        .filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent"))
+        .map((m) => String(m.name || "").replace(/^models\//, ""))
+        .filter(Boolean)
+        .sort();
+    }
+
+    const url = this.normalizeModelsEndpoint(endpoint, platform);
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const response = await fetch(config.corsProxyMode ? this.applyCorsProxy(url) : url, { method: "GET", headers });
+    if (!response.ok) throw new Error("获取模型失败");
+    const data = await response.json();
+    return (Array.isArray(data.data) ? data.data : [])
+      .map((m) => m.id || m.name || m)
+      .filter(Boolean)
+      .filter((id) => !String(id).toLowerCase().includes("embed"))
+      .sort();
+  },
+
+  parseChatResponse(platform, data) {
+    let raw = platform === "gemini"
+      ? data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("")
+      : data?.choices?.[0]?.message?.content ||
+        data?.choices?.[0]?.text ||
+        data?.message?.content ||
+        data?.reply ||
+        data?.content ||
+        data?.output_text ||
+        data?.output?.[0]?.content?.map?.((p) => p.text || p.content || "").join("") ||
+        data?.output?.[0]?.content?.[0]?.text;
+    if (Array.isArray(raw)) raw = raw.map((p) => p.text || p.content || "").join("");
+    if (typeof raw === "string") {
+      raw = raw.replace(/([？！])。+/g, "$1").replace(/([?!])\.+/g, "$1").replace(/([？！])\.+/g, "$1").replace(/([?!])。+/g, "$1");
+    }
+    return raw;
+  }
+};
+
+
+let appState = loadSessionState();
 let apiConfig = loadConfig();
 let isSending = false;
 
-init();
+initSessionUpgrade();
 
 function init() {
   updateClock();
   setInterval(updateClock, 15000);
   
   // 载入选项
-  populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
+  populateScopeSelect();
   
   renderCharactersStrip();
   renderActivePersonaCard();
@@ -157,12 +317,32 @@ function init() {
   renderWorldList();
   
   syncConfigForm();
+  populateModelsDropdown();
   updateConnectionLabel();
   bindEvents();
   autosizeInput();
 }
 
-function bindEvents() { elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown); elements.endpoint.addEventListener("change", populateModelsDropdown); elements.apiKey.addEventListener("change", populateModelsDropdown);
+function bindEvents() {
+  elements.apiPlatform.addEventListener("change", () => {
+    const nextDefault = ApiHandler.getDefaultEndpoint(elements.apiPlatform.value);
+    const current = elements.endpoint.value.trim().replace(/\/+$/, "");
+    const officialEndpoints = ["openai", "gemini", "deepseek", "glm"].flatMap((p) => {
+      const base = ApiHandler.getDefaultEndpoint(p);
+      return [base, base + "/v1", base + "/v1/chat/completions", base + "/chat/completions"];
+    });
+    if (nextDefault && (!current || officialEndpoints.includes(current))) elements.endpoint.value = nextDefault;
+    const suggestedModel = { gemini: "gemini-1.5-flash", deepseek: "deepseek-chat", glm: "glm-4-flash" }[elements.apiPlatform.value];
+    if (suggestedModel && (!elements.apiModelCustom.value.trim() || /^(gpt-|gemini-|deepseek-|glm-)/i.test(elements.apiModelCustom.value.trim()))) {
+      elements.apiModelCustom.value = suggestedModel;
+      if ([...elements.model.options].some((opt) => opt.value === "custom")) elements.model.value = "custom";
+    }
+    populateModelsDropdown();
+  });
+  elements.endpoint.addEventListener("change", populateModelsDropdown);
+  elements.apiKey.addEventListener("change", populateModelsDropdown);
+  elements.corsProxyMode.addEventListener("change", populateModelsDropdown);
+  elements.proxyMode.addEventListener("change", populateModelsDropdown);
   elements.chatForm.addEventListener("submit", handleSubmit);
   elements.chatInput.addEventListener("input", autosizeInput);
   elements.chatInput.addEventListener("keydown", (event) => {
@@ -172,21 +352,14 @@ function bindEvents() { elements.endpoint.addEventListener("change", populateMod
     }
   });
 
-  elements.clearChatButton.addEventListener("click", () => {
-    const character = getActiveCharacter();
-    appState.messages[character.id] = [assistantMessage(character.greeting, "开场")];
-    saveState();
-    renderMessages();
+  elements.userPersonaButton.addEventListener("click", openUserPersonaDrawer);
+  elements.closeUserPersonaDrawer.addEventListener("click", closeUserPersonaDrawer);
+  elements.userPersonaForm.addEventListener("submit", saveUserPersonaFromForm);
+  elements.resetUserPersonaButton.addEventListener("click", resetUserPersonaForm);
+  elements.userPersonaDrawer.addEventListener("click", (event) => {
+    if (event.target === elements.userPersonaDrawer) closeUserPersonaDrawer();
   });
 
-  elements.newButton.addEventListener("click", () => {
-    const activeTab = document.querySelector(".tab.is-active")?.dataset.tab || "chat";
-    if (activeTab === "world") {
-      openWorldDrawer();
-    } else {
-      openCharacterDrawer();
-    }
-  });
 
   elements.tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -283,32 +456,61 @@ function loadConfig() {
     const parsed = JSON.parse(localStorage.getItem(configKey) || "{}");
     const rememberedKey = localStorage.getItem(keyStorageKey) || "";
     const sessionKey = sessionStorage.getItem(keyStorageKey) || "";
+    const legacyPlatform = localStorage.getItem("apiPlatform") || "";
+    const platform = parsed.platform || legacyPlatform || defaultConfig.platform;
+    const legacyEndpoint = localStorage.getItem("apiEndpoint") || "";
+    const legacyModel = localStorage.getItem("apiModel") || "";
+    const legacyKey = localStorage.getItem("apiKey") || "";
+    const legacyPersona = localStorage.getItem("user_persona") || "";
     return {
       ...defaultConfig,
       ...parsed,
-      apiKey: rememberedKey || sessionKey || ""
+      platform,
+      endpoint: parsed.endpoint || legacyEndpoint || ApiHandler.getDefaultEndpoint(platform) || "",
+      model: parsed.model || legacyModel || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model),
+      userPersona: legacyPersona || parsed.userPersona || "",
+      apiKey: rememberedKey || sessionKey || legacyKey || ""
     };
   } catch {
-    return { ...defaultConfig, apiKey: "" };
+    return { ...defaultConfig, endpoint: ApiHandler.getDefaultEndpoint(defaultConfig.platform), apiKey: "" };
   }
 }
 
-function saveConfigFromForm() {
-  apiConfig = {
-    endpoint: elements.endpoint.value.trim() || defaultConfig.endpoint,
-    model: (elements.model.value === "custom" ? elements.apiModelCustom.value.trim() : elements.model.value) || defaultConfig.model,
+function readConfigFromForm() {
+  const platform = elements.apiPlatform.value || defaultConfig.platform;
+  const selectedModel = elements.model.value;
+  const customModel = elements.apiModelCustom.value.trim();
+  let model = selectedModel === "custom" ? customModel : selectedModel;
+  if (!model || model === "fetching") model = customModel || apiConfig.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
+  return {
+    platform,
+    endpoint: elements.endpoint.value.trim() || ApiHandler.getDefaultEndpoint(platform) || "",
+    model,
     temperature: clampNumber(Number(elements.temperature.value || defaultConfig.temperature), 0, 2),
     rememberKey: elements.rememberKey.checked,
-    proxyMode: elements.proxyMode.checked, corsProxyMode: elements.corsProxyMode.checked,
-    apiKey: elements.apiKey.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim(), manualReplyMode: elements.manualReplyMode.checked, customModelName: elements.apiModelCustom.value.trim()
+    proxyMode: elements.proxyMode.checked,
+    corsProxyMode: elements.corsProxyMode.checked,
+    apiKey: elements.apiKey.value.trim(),
+    manualReplyMode: elements.manualReplyMode.checked,
+    customModelName: customModel,
+    userPersona: elements.userPersona.value.trim()
   };
+}
+
+function saveConfigFromForm() {
+  apiConfig = readConfigFromForm();
 
   localStorage.setItem(configKey, JSON.stringify({
+    platform: apiConfig.platform,
     endpoint: apiConfig.endpoint,
     model: apiConfig.model,
     temperature: apiConfig.temperature,
     rememberKey: apiConfig.rememberKey,
-    proxyMode: apiConfig.proxyMode, corsProxyMode: apiConfig.corsProxyMode, manualReplyMode: apiConfig.manualReplyMode, customModelName: apiConfig.customModelName
+    proxyMode: apiConfig.proxyMode,
+    corsProxyMode: apiConfig.corsProxyMode,
+    manualReplyMode: apiConfig.manualReplyMode,
+    customModelName: apiConfig.customModelName,
+    userPersona: apiConfig.userPersona
   }));
 
   const keyStore = apiConfig.rememberKey ? localStorage : sessionStorage;
@@ -316,15 +518,91 @@ function saveConfigFromForm() {
   otherStore.removeItem(keyStorageKey);
   if (apiConfig.apiKey) keyStore.setItem(keyStorageKey, apiConfig.apiKey);
   else keyStore.removeItem(keyStorageKey);
+
+  localStorage.setItem("apiPlatform", apiConfig.platform);
+  localStorage.setItem("apiEndpoint", apiConfig.endpoint);
+  localStorage.setItem("apiModel", apiConfig.model);
+  if (apiConfig.apiKey) localStorage.setItem("apiKey", apiConfig.apiKey);
+  else localStorage.removeItem("apiKey");
+  localStorage.setItem("user_persona", apiConfig.userPersona || "");
 }
 
 function syncConfigForm() {
-  elements.endpoint.value = apiConfig.endpoint || defaultConfig.endpoint;
+  elements.apiPlatform.value = apiConfig.platform || defaultConfig.platform;
+  elements.endpoint.value = apiConfig.endpoint || ApiHandler.getDefaultEndpoint(elements.apiPlatform.value) || "";
   // Skip raw value restore
   elements.temperature.value = apiConfig.temperature ?? defaultConfig.temperature;
   elements.apiKey.value = apiConfig.apiKey || "";
   elements.rememberKey.checked = Boolean(apiConfig.rememberKey);
-  elements.proxyMode.checked = Boolean(apiConfig.proxyMode); elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode); elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode); elements.apiModelCustom.value = apiConfig.customModelName || ""; elements.apiModelCustom.value = apiConfig.customModelName || ""; if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } elements.manualReplyMode.addEventListener("change", () => { if (elements.manualReplyMode.checked) { elements.replyButton.style.display = "grid"; } else { elements.replyButton.style.display = "none"; } });
+  elements.proxyMode.checked = Boolean(apiConfig.proxyMode);
+  elements.corsProxyMode.checked = Boolean(apiConfig.corsProxyMode);
+  elements.manualReplyMode.checked = Boolean(apiConfig.manualReplyMode);
+  elements.apiModelCustom.value = apiConfig.customModelName || "";
+  elements.userPersona.value = apiConfig.userPersona || "";
+  elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
+  elements.manualReplyMode.addEventListener("change", () => {
+    elements.replyButton.style.display = elements.manualReplyMode.checked ? "grid" : "none";
+  });
+}
+
+function getUserProfile(config = apiConfig) {
+  const storedNick = localStorage.getItem("user_nick") || localStorage.getItem("userNick") || "";
+  const nick = storedNick.trim() || "玩家";
+  const avatarText = (localStorage.getItem("user_avatar_text") || nick.slice(0, 2) || "我").trim().slice(0, 2) || "我";
+  const persona = (localStorage.getItem("user_persona") || config?.userPersona || "").trim();
+  const nudge = (localStorage.getItem("user_nudge") || "的脑袋").trim() || "的脑袋";
+  return { nick, avatarText, persona, nudge };
+}
+
+function openUserPersonaDrawer() {
+  const user = getUserProfile();
+  elements.userNick.value = user.nick === "玩家" ? "" : user.nick;
+  elements.userAvatarText.value = user.avatarText;
+  elements.userPersona.value = user.persona;
+  elements.userNudge.value = user.nudge;
+  elements.userPersonaDrawer.classList.add("is-open");
+  elements.userPersonaDrawer.setAttribute("aria-hidden", "false");
+  setTimeout(() => elements.userNick.focus(), 60);
+}
+
+function closeUserPersonaDrawer() {
+  elements.userPersonaDrawer.classList.remove("is-open");
+  elements.userPersonaDrawer.setAttribute("aria-hidden", "true");
+}
+
+function persistUserPersona(persona) {
+  apiConfig = { ...apiConfig, userPersona: persona };
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem(configKey) || "{}"); } catch { stored = {}; }
+  localStorage.setItem(configKey, JSON.stringify({ ...stored, userPersona: persona }));
+  localStorage.setItem("user_persona", persona);
+}
+
+function saveUserPersonaFromForm(event) {
+  event.preventDefault();
+  const nick = elements.userNick.value.trim() || "玩家";
+  const avatarText = (elements.userAvatarText.value.trim() || nick.slice(0, 2) || "我").slice(0, 2);
+  const persona = elements.userPersona.value.trim();
+  const nudge = elements.userNudge.value.trim() || "的脑袋";
+  localStorage.setItem("user_nick", nick);
+  localStorage.setItem("user_avatar_text", avatarText);
+  localStorage.setItem("user_nudge", nudge);
+  persistUserPersona(persona);
+  updateConnectionLabel("User 人设已保存");
+  closeUserPersonaDrawer();
+  setTimeout(() => updateConnectionLabel(), 2000);
+}
+
+function resetUserPersonaForm() {
+  if (!confirm("清空 User 人设吗？")) return;
+  elements.userNick.value = "";
+  elements.userAvatarText.value = "我";
+  elements.userPersona.value = "";
+  elements.userNudge.value = "的脑袋";
+  localStorage.removeItem("user_nick");
+  localStorage.setItem("user_avatar_text", "我");
+  localStorage.setItem("user_nudge", "的脑袋");
+  persistUserPersona("");
 }
 
 function updateConnectionLabel(status) {
@@ -377,6 +655,7 @@ function renderActivePersonaCard() {
   document.documentElement.style.setProperty("--active-soft", char.soft || "rgba(255,127,141,0.18)");
   
   const tagsHtml = (char.tags || "").split(/[,，]/).filter(t => t.trim()).map(t => `<span class="tag-label">${escapeHtml(t.trim())}</span>`).join("");
+  const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || "自定义角色";
   
   elements.activePersona.innerHTML = `
     <div class="avatar-big" style="background:${char.color}">
@@ -384,7 +663,7 @@ function renderActivePersonaCard() {
     </div>
     <div class="persona-copy">
       <h1>${escapeHtml(char.name)}</h1>
-      <p class="role-desc">${escapeHtml(char.role)} · ${escapeHtml(char.title)}</p>
+      <p class="role-desc">${escapeHtml(roleText)} · ${escapeHtml(char.title || char.intro || "")}</p>
       <div class="tags-row">${tagsHtml}</div>
     </div>
     <button class="icon-button" id="editActivePersonaButton" type="button" title="编辑设定">
@@ -419,6 +698,42 @@ function formatRichText(text) {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
+function splitAssistantReply(text) {
+  const cleaned = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/^(?:AI|assistant|回复)[:：]\s*/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!cleaned) return [];
+
+  const normalizePart = (part) => part.replace(/^[-*•\d.、)）\s]+/, "").trim();
+  const splitAfter = (value, punctuationPattern) => {
+    const out = [];
+    let buf = "";
+    for (const ch of value) {
+      buf += ch;
+      if (punctuationPattern.test(ch)) {
+        out.push(buf);
+        buf = "";
+      }
+    }
+    if (buf.trim()) out.push(buf);
+    return out.map(normalizePart).filter(Boolean);
+  };
+  const fromLines = cleaned.split(/\n+/).map(normalizePart).filter(Boolean);
+  if (fromLines.length >= 2) return fromLines.slice(0, 6);
+
+  let parts = splitAfter(cleaned, /[。！？!?]/);
+  if (parts.length < 2 && cleaned.length > 28) {
+    parts = splitAfter(cleaned, /[，,；;]/);
+  }
+  return (parts.length >= 2 ? parts : [cleaned]).slice(0, 6);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function handleSubmit(event) {
   event.preventDefault();
   const content = elements.chatInput.value.trim();
@@ -433,7 +748,18 @@ async function handleSubmit(event) {
   saveState();
   renderMessages();
   
-  if (!apiConfig.manualReplyMode) { if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; } } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; if (!apiConfig.manualReplyMode) { await replyToUser(char, content); } else { elements.replyButton.onclick = async () => { elements.replyButton.disabled = true; await replyToUser(char, content); elements.replyButton.disabled = false; }; } elements.replyButton.disabled = false; }; }
+  if (!apiConfig.manualReplyMode) {
+    await replyToUser(char, content);
+  } else {
+    elements.replyButton.onclick = async () => {
+      elements.replyButton.disabled = true;
+      try {
+        await replyToUser(char, content);
+      } finally {
+        elements.replyButton.disabled = false;
+      }
+    };
+  }
 }
 
 
@@ -453,25 +779,6 @@ function triggerWorldBook(content, charId) {
     const isGlobal = entry.scope === "all";
     if (!isGlobal && !isBound) return;
   
-    let isHit = entry.always;
-    if (!isHit && entry.keywords) {
-      const kws = entry.keywords.split(/[,，]/).map(k => k.trim().toLowerCase()).filter(Boolean);
-      isHit = kws.some(kw => content.toLowerCase().includes(kw));
-    }
-    
-    if (isHit) {
-      hitEntries.push(entry);
-      hints.push(entry.title);
-    }
-  });
-
-  const hitEntries = [];
-  const hints = [];
-  
-  appState.worldBook.forEach((entry) => {
-    if (!entry.enabled) return;
-    if (entry.scope !== "all" && entry.scope !== charId) return;
-    
     let isHit = entry.always;
     if (!isHit && entry.keywords) {
       const kws = entry.keywords.split(/[,，]/).map(k => k.trim().toLowerCase()).filter(Boolean);
@@ -512,8 +819,18 @@ async function replyToUser(char, content) {
     const hasKey = Boolean(apiConfig.apiKey);
     const useApi = hasKey || apiConfig.proxyMode;
     const reply = useApi ? await callChatApi(char, worldEntries) : localReply(char);
-    
-    replaceLoadingMessage(char.id, assistantMessage(reply, useApi ? "API" : "本地陪伴"));
+    const chunks = useApi ? splitAssistantReply(reply) : [reply];
+    if (chunks.length === 0) throw new Error("接口返回内容为空");
+
+    replaceLoadingMessage(char.id, assistantMessage(chunks[0], useApi ? "API" : "本地陪伴"));
+    saveState();
+    renderMessages();
+    for (const chunk of chunks.slice(1)) {
+      await sleep(Math.min(1800, 320 + chunk.length * 45));
+      appState.messages[char.id].push(assistantMessage(chunk, useApi ? "API" : "本地陪伴"));
+      saveState();
+      renderMessages();
+    }
     updateConnectionLabel(useApi ? "回复完毕" : "本地回复");
   } catch (error) {
     const fallback = apiFailureReply(error);
@@ -534,77 +851,114 @@ async function replyToUser(char, content) {
 
 
 async function callChatApi(char, worldEntries) {
-  let endpoint = apiConfig.endpoint || defaultConfig.endpoint;
-  const apiMessages = buildApiMessages(char, worldEntries);
-  
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = `Bearer ${apiConfig.apiKey}`;
+  return callChatApiWithOptions(char, worldEntries);
+}
+
+async function callChatApiWithOptions(char, worldEntries, options = {}) {
+  const config = options.config || apiConfig;
+  if (!config.apiKey && !config.proxyMode) {
+    throw new Error("请先填写 API Key，或开启代理不需要前端 Key 模式。");
   }
 
-  // 跨域兼容中转代理模式
-  if (apiConfig.corsProxyMode) {
-    const originalEndpoint = endpoint;
-    endpoint = "https://cors-anywhere.azm.workers.dev/" + endpoint;
-    headers["Target-URL"] = originalEndpoint;
+  if ((config.platform || ApiHandler.inferPlatform(config)) === "MyAPI" && !config.endpoint) {
+    throw new Error("MyAPI 模式需要填写 API 接口地址。");
   }
 
-  // overridden
-  const apiMessages = buildApiMessages(char, worldEntries);
-  
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = `Bearer ${apiConfig.apiKey}`;
-  }
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: apiConfig.model || defaultConfig.model,
-      messages: apiMessages,
-      temperature: apiConfig.temperature ?? defaultConfig.temperature,
-      stream: false
-    })
+  const apiMessages = buildApiMessages(char, worldEntries, options);
+  const platform = ApiHandler.inferPlatform(config);
+  const model = config.model || (platform === "gemini" ? "gemini-1.5-flash" : defaultConfig.model);
+  const payload = ApiHandler.generateChatPayload(platform, config.endpoint, config.apiKey, model, apiMessages, {
+    temperature: config.temperature ?? defaultConfig.temperature
   });
+  const requestUrl = config.corsProxyMode ? ApiHandler.applyCorsProxy(payload.url) : payload.url;
 
+  const response = await fetchWithRetry(requestUrl, payload.options);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}${text ? `: ${text.slice(0, 160)}` : ""}`);
+    throw new Error(`HTTP ${response.status}${text ? `: ${text.slice(0, 240)}` : ""}`);
   }
 
   const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content || data?.message?.content || data?.reply || data?.content;
+  const content = ApiHandler.parseChatResponse(platform, data);
   if (!content) throw new Error("接口返回内容为空");
   return String(content).trim();
 }
 
-function buildApiMessages(char, worldEntries) {
-  const history = appState.messages[char.id]
-    .filter((m) => !m.loading)
-    .slice(-12)
-    .map((m) => ({ role: m.role, content: m.content }));
+async function fetchWithRetry(url, options) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, options, 45000);
+      if (response.ok || (response.status < 500 && response.status !== 429)) return response;
+      lastError = response;
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(700);
+  }
+  if (lastError instanceof Response) return lastError;
+  throw lastError;
+}
 
-  let systemPrompt = char.system;
-  
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("请求超时，请检查接口地址、网络或代理。出错时不会一直卡在思考中了。");
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function buildSystemPrompt(char, worldEntries, options = {}) {
+  const userProfile = getUserProfile(options.config || apiConfig);
+  const userPersona = (options.config?.userPersona || userProfile.persona || apiConfig.userPersona || "").trim();
+  const roleText = char.role || (char.tags || "").split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || char.title || "自定义联系人";
+  const lines = [
+    `你正在扮演通讯录里的联系人「${char.name}」，和用户在手机聊天界面里私聊。`,
+    `【用户称呼】${userProfile.nick}`,
+    `【联系人身份】${roleText}`,
+    char.title ? `【联系人标题】${char.title}` : "",
+    char.tags ? `【联系人标签】${char.tags}` : "",
+    char.intro ? `【联系人简介】${char.intro}` : "",
+    char.system ? `【联系人提示词】${char.system}` : "",
+    userPersona ? `【用户人设】${userPersona}` : "【用户人设】用户还没有填写，请从聊天内容里自然判断称呼和关系。",
+    userProfile.nudge ? `【用户拍一拍】拍了拍我${userProfile.nudge}` : ""
+  ].filter(Boolean);
+
   if (worldEntries && worldEntries.length > 0) {
-    systemPrompt += "\n\n【当前命中设定背景背景注入】：";
-    worldEntries.forEach((entry) => {
-      systemPrompt += `\n- 《${entry.title}》: ${entry.content}`;
-    });
+    lines.push("【当前命中设定】");
+    worldEntries.forEach((entry) => lines.push(`- 《${entry.title}》：${entry.content}`));
   }
 
-  return [
-    { role: "system", content: systemPrompt },
-    { role: "system", content: "请使用简体中文。记住你是一个在手机端和用户交互的伴侣，语气极具个性，融入你的身份设定。不要自称AI，回复尽量精简、温馨、真切。" },
-    ...history
-  ];
+  if (options.test) {
+    lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
+  } else {
+    lines.push("【聊天方式】像真实联系人一样回复。默认一次回复 2 到 5 条短消息，每条消息单独一行；除非用户只需要极短确认，否则不要只回一整段。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【连续性】认真参考最近聊天，不要每轮都像第一次见面，也不要机械复述用户的话。语气、边界和情绪都要符合联系人提示词。");
+  }
+
+  return lines.join("\n");
+}
+
+function buildApiMessages(char, worldEntries, options = {}) {
+  const systemPrompt = buildSystemPrompt(char, worldEntries, options);
+  if (options.test) {
+    return [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: "测试一下接口是否能正常回复，请只说连接正常。" }
+    ];
+  }
+
+  const history = appState.messages[char.id]
+    .filter((m) => !m.loading && m.content)
+    .slice(-24)
+    .map((m) => ({ role: m.role, content: m.content }));
+
+  return [{ role: "system", content: systemPrompt }, ...history];
 }
 
 async function testConnection() {
@@ -613,7 +967,7 @@ async function testConnection() {
   elements.settingsNote.textContent = "正在测试连接...";
   try {
     const char = getActiveCharacter();
-    const reply = await callChatApi(char, [{ title: "测试", content: "这是一条测试" }]);
+    const reply = await callChatApiWithOptions(char, [], { test: true, config: apiConfig });
     elements.settingsNote.textContent = "测试成功：" + reply.slice(0, 80);
     updateConnectionLabel("测试成功");
   } catch (error) {
@@ -638,7 +992,7 @@ function localReply(char) {
   const latest = (appState.messages[char.id] || []).filter((m) => m.role === "user").slice(-1)[0]?.content || "";
   const next = latest.length > 20 ? latest.slice(0, 20) + "..." : latest;
   
-  return "（在可爱手机里认真地听着你说完「" + (next || "悄悄话") + "」）\n\n笨蛋，我现在还在本地陪伴模式哦。你可以在右上角的“设置”里配置好API连接，之后我们就可以无障碍地自由对话啦！在这之前，我会一直乖乖守在这里陪着你的，放心吧。";
+  return "（在可爱手机里认真地听着你说完「" + (next || "悄悄话") + "」）\n\n笨蛋，我现在还在本地陪伴模式哦。你可以在底部“设置”里配置好 API 连接，之后我们就可以无障碍地自由对话啦！在这之前，我会一直乖乖守在这里陪着你的，放心吧。";
 }
 
 function ensureMessageList(charId) {
@@ -716,7 +1070,7 @@ function openCharacterDrawer(char = null) {
   }
 
   if (char) {
-    document.getElementById("characterDrawerTitle").textContent = "编辑角色";
+    document.getElementById("characterDrawerTitle").textContent = "编辑联系人";
     elements.characterId.value = char.id;
     elements.characterName.value = char.name;
     elements.characterAvatar.value = char.avatar || char.name[0];
@@ -728,7 +1082,7 @@ function openCharacterDrawer(char = null) {
     elements.characterSystem.value = char.system || "";
     elements.duplicateCharacterButton.style.display = "block";
   } else {
-    document.getElementById("characterDrawerTitle").textContent = "添加角色";
+    document.getElementById("characterDrawerTitle").textContent = "添加联系人";
     elements.characterId.value = "";
     elements.characterName.value = "";
     elements.characterAvatar.value = "";
@@ -761,6 +1115,8 @@ function handleCharacterSubmit(event) {
   const intro = elements.characterIntro.value.trim();
   const greeting = elements.characterGreeting.value.trim();
   const system = elements.characterSystem.value.trim();
+  const existingChar = appState.characters.find(c => c.id === id);
+  const role = existingChar?.role || tags.split(/[,，]/).map(t => t.trim()).filter(Boolean)[0] || title || "自定义角色";
 
   // 读取绑定的世界书选择项
   const checkedBoxes = document.querySelectorAll("input[name=\x22boundWorldBooks\x22]:checked");
@@ -769,25 +1125,8 @@ function handleCharacterSubmit(event) {
   const newChar = {
     id: id, name: name, avatar: avatar, color: color,
     soft: convertHexToRgba(color, 0.3),
-    title: title, tags: tags, intro: intro, greeting: greeting, system: system,
+    role: role, title: title, tags: tags, intro: intro, greeting: greeting, system: system,
     boundWorldBookIds: boundWorldBookIds
-  };
-
-  event.preventDefault();
-  const id = elements.characterId.value.trim() || "char-" + Date.now();
-  const name = elements.characterName.value.trim();
-  const avatar = elements.characterAvatar.value.trim() || name[0];
-  const color = elements.characterColor.value;
-  const title = elements.characterTitle.value.trim();
-  const tags = elements.characterTags.value.trim();
-  const intro = elements.characterIntro.value.trim();
-  const greeting = elements.characterGreeting.value.trim();
-  const system = elements.characterSystem.value.trim();
-
-  const newChar = {
-    id: id, name: name, avatar: avatar, color: color,
-    soft: convertHexToRgba(color, 0.3),
-    title: title, tags: tags, intro: intro, greeting: greeting, system: system
   };
 
   const existingIndex = appState.characters.findIndex(c => c.id === id);
@@ -805,7 +1144,8 @@ function handleCharacterSubmit(event) {
   saveState();
   closeCharacterDrawer();
   
-  populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
+  populateScopeSelect();
+  populateModelsDropdown();
   renderCharactersStrip();
   renderActivePersonaCard();
   renderCharacterList();
@@ -826,7 +1166,7 @@ function convertHexToRgba(hex, alpha) {
 }
 
 function renderCharacterList() {
-  elements.characterCount.textContent = appState.characters.length + " 个角色";
+  elements.characterCount.textContent = appState.characters.length + " 个联系人";
   elements.characterList.innerHTML = appState.characters.map((char) => {
     return "<div class=\"card character-card\" style=\"border-left: 4px solid " + char.color + "\">" +
       "<div class=\"avatar-mid\" style=\"background:" + char.color + "\">" + escapeHtml(char.avatar || char.name[0]) + "</div>" +
@@ -855,14 +1195,15 @@ function renderCharacterList() {
         alert("至少要保留一个伴侣角色哦。");
         return;
       }
-      if (confirm("确定要删除这个角色吗？聊天记录也会消失。")) {
+      if (confirm("确定要删除这个联系人吗？聊天记录也会消失。")) {
         appState.characters = appState.characters.filter(c => c.id !== id);
         delete appState.messages[id];
         if (appState.activeCharacterId === id) {
           appState.activeCharacterId = appState.characters[0].id;
         }
         saveState();
-        populateScopeSelect(); populateModelsDropdown(); populateModelsDropdown();
+        populateScopeSelect();
+        populateModelsDropdown();
         renderCharactersStrip();
         renderActivePersonaCard();
         renderCharacterList();
@@ -1033,6 +1374,8 @@ function resetToDefaults() {
     localStorage.removeItem(storageKey);
     localStorage.removeItem(configKey);
     localStorage.removeItem(keyStorageKey);
+    sessionStorage.removeItem(keyStorageKey);
+    ["apiPlatform", "apiEndpoint", "apiKey", "apiModel", "user_persona", "user_nick", "user_avatar_text", "user_nudge"].forEach((key) => localStorage.removeItem(key));
     alert("重置完毕，正在重新加载。");
     location.reload();
   }
@@ -1040,99 +1383,37 @@ function resetToDefaults() {
 
 async function populateModelsDropdown() {
   const select = elements.model;
-  select.innerHTML = "<option value=\x22fetching\x22>正在从上游API获取模型列表...</option>";
-  
-  // overridden
-  
-  let modelsUrl = endpoint.replace("/chat/completions", "/models");
-  if (apiConfig.corsProxyMode) {
-    modelsUrl = "https://cors-anywhere.azm.workers.dev/" + modelsUrl;
+  select.innerHTML = "<option value=\x22fetching\x22>正在从上游 API 获取模型列表...</option>";
+  const draftConfig = readConfigFromForm();
+  const platform = ApiHandler.inferPlatform(draftConfig);
+  const fallbackModels = platform === "gemini"
+    ? ApiHandler.geminiFallbackModels
+    : platform === "deepseek"
+      ? ["deepseek-chat", "deepseek-coder"]
+      : platform === "glm"
+        ? ["glm-4-flash", "glm-4-plus"]
+        : ApiHandler.fallbackModels;
+  let models = fallbackModels;
+
+  try {
+    models = await ApiHandler.fetchModels(platform, draftConfig.endpoint, draftConfig.apiKey, {
+      corsProxyMode: draftConfig.corsProxyMode
+    });
+    if (!models.length) throw new Error("列表为空");
+  } catch (e) {
+    models = fallbackModels;
   }
 
-  
-  const headers = { "Content-Type": "application/json" };
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = "Bearer " + apiConfig.apiKey;
-  }
-  
-  const fallbackModels = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "claude-3-5-sonnet"];
-  
-  try {
-    const response = await fetch(modelsUrl, { method: "GET", headers });
-    if (!response.ok) throw new Error("获取模型失败");
-    const data = await response.json();
-    const models = (data.data || []).map(m => m.id || m).filter(Boolean);
-    
-    if (models.length === 0) throw new Error("列表为空");
-    
-    select.innerHTML = models.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  } catch (e) {
-    select.innerHTML = fallbackModels.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  }
-  
-  // 绑定切换手动输入逻辑
-  select.onchange = () => {
-    if (select.value === "custom") {
-      elements.apiModelCustom.style.display = "block";
-    } else {
-      elements.apiModelCustom.style.display = "none";
-    }
-  };
-  
-  // 恢复之前选择的模型
-  const savedModel = apiConfig.model || defaultConfig.model;
-  if ([...select.options].some(opt => opt.value === savedModel)) {
-    select.value = savedModel;
-    elements.apiModelCustom.style.display = "none";
-  } else if (savedModel) {
-    select.value = "custom";
-    elements.apiModelCustom.style.display = "block";
-    elements.apiModelCustom.value = savedModel;
-  }
-}
+  select.innerHTML = models
+    .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+    .join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
 
-async function populateModelsDropdown() {
-  const select = elements.model;
-  select.innerHTML = "<option value=\x22fetching\x22>正在从上游API获取模型列表...</option>";
-  
-  const endpoint = apiConfig.endpoint || defaultConfig.endpoint;
-  let modelsUrl = endpoint.replace("/chat/completions", "/models");
-  if (apiConfig.corsProxyMode) {
-    modelsUrl = "https://cors-anywhere.azm.workers.dev/" + modelsUrl;
-  }
-  
-  const headers = { "Content-Type": "application/json" };
-  if (apiConfig.apiKey) {
-    headers["Authorization"] = "Bearer " + apiConfig.apiKey;
-  }
-  
-  const fallbackModels = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "deepseek-chat", "deepseek-coder", "claude-3-5-sonnet"];
-  
-  try {
-    const response = await fetch(modelsUrl, { method: "GET", headers });
-    if (!response.ok) throw new Error("获取模型失败");
-    const data = await response.json();
-    const models = (data.data || []).map(m => m.id || m).filter(Boolean);
-    
-    if (models.length === 0) throw new Error("列表为空");
-    
-    select.innerHTML = models.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  } catch (e) {
-    select.innerHTML = fallbackModels.map(m => "<option value=\x22" + m + "\x22>" + m + "</option>").join("") + "<option value=\x22custom\x22>【手动输入自定义模型】</option>";
-  }
-  
-  // 绑定切换手动输入逻辑
   select.onchange = () => {
-    if (select.value === "custom") {
-      elements.apiModelCustom.style.display = "block";
-    } else {
-      elements.apiModelCustom.style.display = "none";
-    }
+    elements.apiModelCustom.style.display = select.value === "custom" ? "block" : "none";
   };
-  
-  // 恢复之前选择的模型
-  const savedModel = apiConfig.model || defaultConfig.model;
-  if ([...select.options].some(opt => opt.value === savedModel)) {
+
+  const savedModel = draftConfig.model || apiConfig.model || defaultConfig.model;
+  if ([...select.options].some((opt) => opt.value === savedModel)) {
     select.value = savedModel;
     elements.apiModelCustom.style.display = "none";
   } else if (savedModel) {
