@@ -73,6 +73,8 @@
   align-items: center;
   padding: 11px;
   border-radius: 18px;
+  touch-action: manipulation;
+  user-select: none;
   color: #1d2732;
   text-align: left;
   background: rgba(255, 255, 255, 0.74);
@@ -147,6 +149,7 @@
   display: inline-grid;
   place-items: center;
   padding: 0 8px;
+  max-width: 74px;
   border-radius: 999px;
   color: #263341;
   background: rgba(255, 255, 255, 0.72);
@@ -155,6 +158,8 @@
   line-height: 1;
   font-weight: 900;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .archive-count {
@@ -270,6 +275,8 @@
 
 .contact-card .tag-row {
   min-height: 22px;
+  max-height: 49px;
+  overflow: hidden;
 }
 
 .mode-switches {
@@ -505,6 +512,10 @@
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: start;
+}
+
+.archive-card-header > div {
+  min-width: 0;
 }
 
 .archive-card h3,

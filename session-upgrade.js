@@ -205,7 +205,9 @@ function sessionNormalizeState(parsed) {
     ? parsed.archives.map((archive) => sessionNormalizeArchive(archive, characters)).filter(Boolean)
     : [];
 
-  return { activeCharacterId, characters, worldBook, moments, messages, sessions, currentSessionIds, archives };
+  const hiddenChatIds = normalizeHiddenChatIds(parsed.hiddenChatIds, characters);
+
+  return { activeCharacterId, characters, worldBook, moments, messages, sessions, currentSessionIds, archives, hiddenChatIds };
 }
 
 function sessionNormalizeCharacter(char) {
@@ -314,6 +316,7 @@ function sessionSaveState() {
     characters: appState.characters,
     worldBook: appState.worldBook,
     moments: appState.moments || [],
+    hiddenChatIds: normalizeHiddenChatIds(appState.hiddenChatIds, appState.characters),
     messages: appState.messages,
     sessions: appState.sessions,
     currentSessionIds: appState.currentSessionIds,
@@ -341,6 +344,7 @@ function sessionOpenConversation(id) {
   sessionHydrateElements();
   const char = appState.characters.find((item) => item.id === id) || appState.characters[0];
   appState.activeCharacterId = char.id;
+  unhideChatEntry(char.id);
   sessionEnsureCurrentSession(char.id);
   if (elements.chatListScreen) elements.chatListScreen.hidden = true;
   if (elements.conversationScreen) elements.conversationScreen.hidden = false;
@@ -356,7 +360,8 @@ function sessionRenderChatList() {
   sessionHydrateElements();
   if (!elements.chatList) return;
   const query = (elements.chatSearch?.value || "").trim().toLowerCase();
-  const visible = appState.characters.filter((char) => !query || [char.name, char.title, char.intro].join(" ").toLowerCase().includes(query));
+  const hiddenIds = new Set(normalizeHiddenChatIds(appState.hiddenChatIds, appState.characters));
+  const visible = appState.characters.filter((char) => !hiddenIds.has(char.id) && (!query || [char.name, char.title, char.intro].join(" ").toLowerCase().includes(query)));
   if (elements.chatOverview) elements.chatOverview.textContent = `${appState.characters.length} 位联系人 · ${appState.archives.length} 个存档`;
   if (!visible.length) {
     elements.chatList.innerHTML = `<div class="empty-state">没有找到聊天对象。</div>`;
@@ -364,8 +369,48 @@ function sessionRenderChatList() {
   }
   elements.chatList.innerHTML = visible.map(sessionRenderChatRow).join("");
   elements.chatList.querySelectorAll("[data-chat-id]").forEach((button) => {
-    button.addEventListener("click", () => sessionOpenConversation(button.dataset.chatId));
+    let longPressTimer = 0;
+    let longPressed = false;
+    const clearTimer = () => {
+      if (longPressTimer) window.clearTimeout(longPressTimer);
+      longPressTimer = 0;
+    };
+    button.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      longPressed = false;
+      clearTimer();
+      longPressTimer = window.setTimeout(() => {
+        longPressed = true;
+        sessionHideChatEntry(button.dataset.chatId);
+      }, 620);
+    });
+    button.addEventListener("pointerup", clearTimer);
+    button.addEventListener("pointerleave", clearTimer);
+    button.addEventListener("pointercancel", clearTimer);
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      clearTimer();
+      sessionHideChatEntry(button.dataset.chatId);
+    });
+    button.addEventListener("click", () => {
+      if (longPressed) {
+        longPressed = false;
+        return;
+      }
+      sessionOpenConversation(button.dataset.chatId);
+    });
   });
+}
+
+function sessionHideChatEntry(charId) {
+  const char = appState.characters.find((item) => item.id === charId);
+  if (!char) return;
+  if (!confirm(`从聊天页面删除「${char.name}」吗？通讯录里再次点聊天会恢复显示。`)) return;
+  appState.hiddenChatIds = normalizeHiddenChatIds([...(appState.hiddenChatIds || []), charId], appState.characters);
+  sessionSaveState();
+  sessionRenderChatList();
+  updateConnectionLabel("已从聊天页删除");
+  setTimeout(() => updateConnectionLabel(), 1800);
 }
 
 function sessionRenderChatRow(char) {
@@ -656,9 +701,10 @@ function sessionRenderCharacterList() {
   elements.characterList.innerHTML = filtered.map((char) => {
     const archiveCount = appState.archives.filter((archive) => archive.characterId === char.id).length;
     const preview = getPersonaPreview(char.intro || char.greeting || "", 72);
+    const title = getPersonaPreview(char.title || getPersonaPreview(char.intro, 28) || "聊天联系人", 28);
     return `
       <article class="item-card contact-card" style="--card-color:${escapeHtml(char.color)}">
-        <div class="item-top"><div class="avatar" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</div><div class="item-title"><strong>${escapeHtml(char.name)}</strong><span>${escapeHtml(char.title || getPersonaPreview(char.intro, 28) || "聊天联系人")}</span></div><span class="scope-tag">${archiveCount} 存档</span></div>
+        <div class="item-top"><div class="avatar" style="background:${escapeHtml(char.color)}">${escapeHtml(char.avatar || char.name[0])}</div><div class="item-title"><strong>${escapeHtml(char.name)}</strong><span title="${escapeHtml(char.title || char.intro || "聊天联系人")}">${escapeHtml(title)}</span></div><span class="scope-tag">${archiveCount} 存档</span></div>
         <p>${escapeHtml(preview)}</p>
         <div class="item-actions"><button class="small-button chat-btn" type="button" data-id="${escapeHtml(char.id)}">聊天</button><button class="small-button edit-btn" type="button" data-id="${escapeHtml(char.id)}">编辑</button><button class="small-button is-danger delete-btn" type="button" data-id="${escapeHtml(char.id)}">删除</button></div>
       </article>
@@ -677,6 +723,7 @@ function sessionDeleteCharacter(id) {
   delete appState.sessions[id];
   delete appState.currentSessionIds[id];
   delete appState.messages[id];
+  appState.hiddenChatIds = normalizeHiddenChatIds((appState.hiddenChatIds || []).filter((hiddenId) => hiddenId !== id), appState.characters);
   appState.archives = appState.archives.filter((archive) => archive.characterId !== id);
   if (appState.activeCharacterId === id) appState.activeCharacterId = appState.characters[0].id;
   sessionSaveState();
@@ -715,6 +762,7 @@ function sessionHandleCharacterSubmit(event) {
     appState.characters.push(nextChar);
     sessionSetCurrentSession(id, sessionCreateBlank(nextChar));
   }
+  unhideChatEntry(id);
   sessionSaveState();
   closeCharacterDrawer();
   populateScopeSelect();

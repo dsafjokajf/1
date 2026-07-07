@@ -476,6 +476,17 @@ function saveState() {
   localStorage.setItem(storageKey, JSON.stringify(appState));
 }
 
+function normalizeHiddenChatIds(value, characters = []) {
+  const validIds = new Set((characters || []).map((char) => char.id));
+  return Array.from(new Set(Array.isArray(value) ? value.map(String) : [])).filter((id) => validIds.has(id));
+}
+
+function unhideChatEntry(charId) {
+  if (!Array.isArray(appState.hiddenChatIds) || !appState.hiddenChatIds.includes(charId)) return false;
+  appState.hiddenChatIds = appState.hiddenChatIds.filter((id) => id !== charId);
+  return true;
+}
+
 function normalizeCharacterMode(mode) {
   const defaults = { online: true, offline: false, innerVoice: false, distance: false };
   if (!mode || typeof mode !== "object") return { ...defaults };
@@ -627,6 +638,7 @@ function normalizeAppStateData(state) {
   appState.worldBook = Array.isArray(state.worldBook) ? state.worldBook : defaultWorldEntries;
   appState.moments = Array.isArray(state.moments) ? state.moments.map(normalizeMomentData).filter(Boolean) : makeDefaultMoments();
   if (!appState.moments.length) appState.moments = makeDefaultMoments();
+  appState.hiddenChatIds = normalizeHiddenChatIds(state.hiddenChatIds, appState.characters);
   if (!appState.characters.some((char) => char.id === state.activeCharacterId)) appState.activeCharacterId = appState.characters[0].id;
   const messages = state.messages && typeof state.messages === "object" ? state.messages : {};
   appState.messages = {};
@@ -637,14 +649,25 @@ function normalizeAppStateData(state) {
 }
 
 function makeDefaultMoments() {
-  return defaultCharacters.slice(0, 2).map((char, index) => normalizeMomentData({
+  return defaultCharacters.map((char, index) => normalizeMomentData({
     id: "moment-" + char.id,
     authorId: char.id,
-    content: index === 0 ? "今天也有好好想你。" : "把乱糟糟的日子揉软一点，留给你。", 
+    content: makeDefaultMomentContent(char, index),
     time: Date.now() - (index + 1) * 3600000,
     likes: index ? ["我"] : [],
     comments: []
   }));
+}
+
+function makeDefaultMomentContent(char, index = 0) {
+  const intro = getPersonaPreview(char?.intro || char?.title || "", 34);
+  const greeting = getPersonaPreview(char?.greeting || "", 34);
+  const options = [
+    intro ? `${intro}。今天也算留下一个小记号。` : "今天没有特别大的事，只是突然想留下些什么。",
+    greeting ? `刚才脑子里冒出来一句：${greeting}` : "把今天的小事攒了攒，发现还是有点想分享。",
+    "路过一盏很亮的灯，忽然觉得晚一点也没关系。"
+  ];
+  return options[index % options.length];
 }
 
 function normalizeMomentData(moment) {
@@ -1231,28 +1254,10 @@ function splitAssistantReply(text) {
     });
     return expanded;
   };
-  const splitAfter = (value, punctuationPattern) => {
-    const out = [];
-    let buf = "";
-    for (const ch of value) {
-      buf += ch;
-      if (punctuationPattern.test(ch)) {
-        out.push(buf);
-        buf = "";
-      }
-    }
-    if (buf.trim()) out.push(buf);
-    return out.map(normalizePart).filter(Boolean);
-  };
   const protectedCleaned = protectInnerVoiceSegments(cleaned);
   const fromLines = protectedCleaned.split(/\n+/).map(normalizePart).filter(Boolean);
-  if (fromLines.length >= 2) return expandInnerVoiceParts(fromLines).slice(0, 8);
-
-  let parts = splitAfter(protectedCleaned, /[。！？!?]/);
-  if (parts.length < 2 && cleaned.length > 28) {
-    parts = splitAfter(protectedCleaned, /[，,；;]/);
-  }
-  return expandInnerVoiceParts(parts.length >= 2 ? parts : [cleaned]).slice(0, 8);
+  if (fromLines.length >= 2) return expandInnerVoiceParts(fromLines);
+  return expandInnerVoiceParts([protectedCleaned]);
 }
 
 function sleep(ms) {
@@ -1474,9 +1479,10 @@ function buildSystemPrompt(char, worldEntries, options = {}) {
     lines.push("【测试要求】只回复一句简短中文，表示连接正常。不要输出解释。");
   } else {
     lines.push("【活人感】联系人设定是事实和边界，不是要逐句展示的台词素材。不要复述设定、不要自报性格、不要用'我是/我会/我不会'解释人设；性格要通过措辞、停顿、选择和边界感表现出来。先回应用户刚说的话，再自然带出态度。");
-    lines.push("【聊天方式】像真实联系人正在回消息。默认一次回复 1 到 4 条短消息，每条消息单独一行；允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
+    lines.push("【聊天方式】像真实联系人正在回消息。你可以按当下情绪和人设自然决定回复一条或多条；想分成多条气泡时，每条消息单独一行。允许犹豫、停顿、半句、反问和轻微口语，但不要堆砌语气词。不要编号，不要 Markdown，不要自称 AI。");
     lines.push("【防 OOC】如果人设和用户当前语境冲突，以人设事实、关系边界和最近聊天记录为准；宁可少说一点，也不要突然热情、突然冷漠、突然换称呼、突然暴露设定或解释设定。");
     lines.push("【当前聊天记忆】后续 user/assistant 记录就是这段对话已经发生过的内容。必须承接里面的事实、约定、称呼、情绪和刚刚说过的话；不要装作没聊过，不要重复第一次见面的寒暄。");
+    lines.push("【重复消息反应】如果用户连续重复同一句、故意刷同样内容或明显绕圈，要像活人一样疑惑、追问原因、担心对方状态或轻微打趣；不要无条件重复上一轮安慰。");
   }
 
   return lines.join("\n");
@@ -1675,6 +1681,7 @@ function handleCharacterSubmit(event) {
   } else {
     appState.characters.push(newChar);
   }
+  unhideChatEntry(id);
 
   ensureMessageList(id);
   if (appState.messages[id].length === 0) {
